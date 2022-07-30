@@ -3,7 +3,9 @@ from dbt.tests.util import run_dbt
 
 macros__test_assert_equal_sql = """
 {% test assert_equal(model, actual, expected) %}
-select * from {{ model }} where COALESCE({{ actual }}, 'COALESCEDNULL') != COALESCE({{ expected }}, 'COALESCEDNULL')
+select * from {{ model }} where {{ actual }} != {{ expected }}
+  or ({{ actual }} is null and {{ expected }} is not null)
+  or ({{ actual }} is not null and {{ expected }} is null)
 
 {% endtest %}
 """
