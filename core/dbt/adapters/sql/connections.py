@@ -10,6 +10,8 @@ from dbt.adapters.base import BaseConnectionManager
 from dbt.contracts.connection import Connection, ConnectionState, AdapterResponse
 from dbt.events.functions import fire_event
 from dbt.events.types import ConnectionUsed, SQLQuery, SQLCommit, SQLQueryStatus
+from dbt.events.contextvars import get_node_info
+from dbt.utils import cast_to_str
 
 
 class SQLConnectionManager(BaseConnectionManager):
@@ -25,9 +27,7 @@ class SQLConnectionManager(BaseConnectionManager):
     @abc.abstractmethod
     def cancel(self, connection: Connection):
         """Cancel the given connection."""
-        raise dbt.exceptions.NotImplementedException(
-            "`cancel` is not implemented for this adapter!"
-        )
+        raise dbt.exceptions.NotImplementedError("`cancel` is not implemented for this adapter!")
 
     def cancel_open(self) -> List[str]:
         names = []
@@ -55,7 +55,13 @@ class SQLConnectionManager(BaseConnectionManager):
         connection = self.get_thread_connection()
         if auto_begin and connection.transaction_open is False:
             self.begin()
-        fire_event(ConnectionUsed(conn_type=self.TYPE, conn_name=connection.name))
+        fire_event(
+            ConnectionUsed(
+                conn_type=self.TYPE,
+                conn_name=cast_to_str(connection.name),
+                node_info=get_node_info(),
+            )
+        )
 
         with self.exception_handler(sql):
             if abridge_sql_log:
@@ -63,7 +69,11 @@ class SQLConnectionManager(BaseConnectionManager):
             else:
                 log_sql = sql
 
-            fire_event(SQLQuery(conn_name=connection.name, sql=log_sql))
+            fire_event(
+                SQLQuery(
+                    conn_name=cast_to_str(connection.name), sql=log_sql, node_info=get_node_info()
+                )
+            )
             pre = time.time()
 
             cursor = connection.handle.cursor()
@@ -71,7 +81,9 @@ class SQLConnectionManager(BaseConnectionManager):
 
             fire_event(
                 SQLQueryStatus(
-                    status=str(self.get_response(cursor)), elapsed=round((time.time() - pre), 2)
+                    status=str(self.get_response(cursor)),
+                    elapsed=round((time.time() - pre)),
+                    node_info=get_node_info(),
                 )
             )
 
@@ -81,7 +93,7 @@ class SQLConnectionManager(BaseConnectionManager):
     @abc.abstractmethod
     def get_response(cls, cursor: Any) -> AdapterResponse:
         """Get the status of the cursor."""
-        raise dbt.exceptions.NotImplementedException(
+        raise dbt.exceptions.NotImplementedError(
             "`get_response` is not implemented for this adapter!"
         )
 
@@ -137,7 +149,7 @@ class SQLConnectionManager(BaseConnectionManager):
     def begin(self):
         connection = self.get_thread_connection()
         if connection.transaction_open is True:
-            raise dbt.exceptions.InternalException(
+            raise dbt.exceptions.DbtInternalError(
                 'Tried to begin a new transaction on connection "{}", but '
                 "it already had one open!".format(connection.name)
             )
@@ -150,12 +162,12 @@ class SQLConnectionManager(BaseConnectionManager):
     def commit(self):
         connection = self.get_thread_connection()
         if connection.transaction_open is False:
-            raise dbt.exceptions.InternalException(
+            raise dbt.exceptions.DbtInternalError(
                 'Tried to commit transaction on connection "{}", but '
                 "it does not have one open!".format(connection.name)
             )
 
-        fire_event(SQLCommit(conn_name=connection.name))
+        fire_event(SQLCommit(conn_name=connection.name, node_info=get_node_info()))
         self.add_commit_query()
 
         connection.transaction_open = False

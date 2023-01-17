@@ -5,7 +5,7 @@ from typing import List, Iterator, Dict, Any, TypeVar, Generic
 
 from dbt.config import RuntimeConfig, Project, IsFQNResource
 from dbt.contracts.graph.model_config import BaseConfig, get_config_for, _listify
-from dbt.exceptions import InternalException
+from dbt.exceptions import DbtInternalError
 from dbt.node_types import NodeType
 from dbt.utils import fqn_search
 
@@ -43,9 +43,12 @@ class UnrenderedConfig(ConfigSource):
             model_configs = unrendered.get("sources")
         elif resource_type == NodeType.Test:
             model_configs = unrendered.get("tests")
+        elif resource_type == NodeType.Metric:
+            model_configs = unrendered.get("metrics")
+        elif resource_type == NodeType.Exposure:
+            model_configs = unrendered.get("exposures")
         else:
             model_configs = unrendered.get("models")
-
         if model_configs is None:
             return {}
         else:
@@ -65,6 +68,10 @@ class RenderedConfig(ConfigSource):
             model_configs = self.project.sources
         elif resource_type == NodeType.Test:
             model_configs = self.project.tests
+        elif resource_type == NodeType.Metric:
+            model_configs = self.project.metrics
+        elif resource_type == NodeType.Exposure:
+            model_configs = self.project.exposures
         else:
             model_configs = self.project.models
         return model_configs
@@ -82,7 +89,7 @@ class BaseContextConfigGenerator(Generic[T]):
             return self._active_project
         dependencies = self._active_project.load_dependencies()
         if project_name not in dependencies:
-            raise InternalException(
+            raise DbtInternalError(
                 f"Project name {project_name} not found in dependencies "
                 f"(found {list(dependencies)})"
             )
@@ -280,14 +287,14 @@ class ContextConfig:
 
             elif k in BaseConfig.mergebehavior["update"]:
                 if not isinstance(v, dict):
-                    raise InternalException(f"expected dict, got {v}")
+                    raise DbtInternalError(f"expected dict, got {v}")
                 if k in config_call_dict and isinstance(config_call_dict[k], dict):
                     config_call_dict[k].update(v)
                 else:
                     config_call_dict[k] = v
             elif k in BaseConfig.mergebehavior["dict_key_append"]:
                 if not isinstance(v, dict):
-                    raise InternalException(f"expected dict, got {v}")
+                    raise DbtInternalError(f"expected dict, got {v}")
                 if k in config_call_dict:  # should always be a dict
                     for key, value in v.items():
                         extend = False

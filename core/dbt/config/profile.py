@@ -9,12 +9,14 @@ from dbt.clients.system import load_file_contents
 from dbt.clients.yaml_helper import load_yaml_text
 from dbt.contracts.connection import Credentials, HasCredentials
 from dbt.contracts.project import ProfileConfig, UserConfig
-from dbt.exceptions import CompilationException
-from dbt.exceptions import DbtProfileError
-from dbt.exceptions import DbtProjectError
-from dbt.exceptions import ValidationException
-from dbt.exceptions import RuntimeException
-from dbt.exceptions import validator_error_message
+from dbt.exceptions import (
+    CompilationError,
+    DbtProfileError,
+    DbtProjectError,
+    DbtValidationError,
+    DbtRuntimeError,
+    ProfileConfigError,
+)
 from dbt.events.types import MissingProfileTarget
 from dbt.events.functions import fire_event
 from dbt.utils import coerce_dict_str
@@ -22,8 +24,6 @@ from dbt.utils import coerce_dict_str
 from .renderer import ProfileRenderer
 
 DEFAULT_THREADS = 1
-
-DEFAULT_PROFILES_DIR = os.path.join(os.path.expanduser("~"), ".dbt")
 
 INVALID_PROFILE_MESSAGE = """
 dbt encountered an error while trying to read your profiles.yml file.
@@ -44,7 +44,7 @@ defined in your profiles.yml file. You can find profiles.yml here:
 
 {profiles_file}/profiles.yml
 """.format(
-    profiles_file=DEFAULT_PROFILES_DIR
+    profiles_file=flags.DEFAULT_PROFILES_DIR
 )
 
 
@@ -60,9 +60,9 @@ def read_profile(profiles_dir: str) -> Dict[str, Any]:
                 msg = f"The profiles.yml file at {path} is empty"
                 raise DbtProfileError(INVALID_PROFILE_MESSAGE.format(error_string=msg))
             return yaml_content
-        except ValidationException as e:
+        except DbtValidationError as e:
             msg = INVALID_PROFILE_MESSAGE.format(error_string=e)
-            raise ValidationException(msg) from e
+            raise DbtValidationError(msg) from e
 
     return {}
 
@@ -75,7 +75,7 @@ def read_user_config(directory: str) -> UserConfig:
             if user_config is not None:
                 UserConfig.validate(user_config)
                 return UserConfig.from_dict(user_config)
-    except (RuntimeException, ValidationError):
+    except (DbtRuntimeError, ValidationError):
         pass
     return UserConfig()
 
@@ -158,7 +158,7 @@ class Profile(HasCredentials):
             dct = self.to_profile_info(serialize_credentials=True)
             ProfileConfig.validate(dct)
         except ValidationError as exc:
-            raise DbtProfileError(validator_error_message(exc)) from exc
+            raise ProfileConfigError(exc) from exc
 
     @staticmethod
     def _credentials_from_profile(
@@ -182,8 +182,8 @@ class Profile(HasCredentials):
             data = cls.translate_aliases(profile)
             cls.validate(data)
             credentials = cls.from_dict(data)
-        except (RuntimeException, ValidationError) as e:
-            msg = str(e) if isinstance(e, RuntimeException) else e.message
+        except (DbtRuntimeError, ValidationError) as e:
+            msg = str(e) if isinstance(e, DbtRuntimeError) else e.message
             raise DbtProfileError(
                 'Credentials in profile "{}", target "{}" invalid: {}'.format(
                     profile_name, target_name, msg
@@ -299,7 +299,7 @@ class Profile(HasCredentials):
 
         try:
             profile_data = renderer.render_data(raw_profile_data)
-        except CompilationException as exc:
+        except CompilationError as exc:
             raise DbtProfileError(str(exc)) from exc
         return target_name, profile_data
 

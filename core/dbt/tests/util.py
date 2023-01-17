@@ -1,16 +1,23 @@
+from io import StringIO
 import os
 import shutil
 import yaml
 import json
 import warnings
 from datetime import datetime
-from typing import List
+from typing import Dict, List
 from contextlib import contextmanager
+from dbt.adapters.factory import Adapter
 
 from dbt.main import handle_and_check
 from dbt.logger import log_manager
 from dbt.contracts.graph.manifest import Manifest
-from dbt.events.functions import fire_event, capture_stdout_logs, stop_capture_stdout_logs
+from dbt.events.functions import (
+    fire_event,
+    capture_stdout_logs,
+    stop_capture_stdout_logs,
+    reset_metadata_vars,
+)
 from dbt.events.test_types import IntegrationTestDebug
 
 # =============================================================================
@@ -34,6 +41,7 @@ from dbt.events.test_types import IntegrationTestDebug
 #   relation_from_name
 #   check_relation_types (table/view)
 #   check_relations_equal
+#   check_relation_has_expected_schema
 #   check_relations_equal_with_relations
 #   check_table_does_exist
 #   check_table_does_not_exist
@@ -61,6 +69,9 @@ def run_dbt(args: List[str] = None, expect_pass=True):
     # Ignore logbook warnings
     warnings.filterwarnings("ignore", category=DeprecationWarning, module="logbook")
 
+    # reset global vars
+    reset_metadata_vars()
+
     # The logger will complain about already being initialized if
     # we don't do this.
     log_manager.reset_handlers()
@@ -69,7 +80,10 @@ def run_dbt(args: List[str] = None, expect_pass=True):
 
     print("\n\nInvoking dbt with {}".format(args))
     res, success = handle_and_check(args)
-    assert success == expect_pass, "dbt exit state did not match expected"
+
+    if expect_pass is not None:
+        assert success == expect_pass, "dbt exit state did not match expected"
+
     return res
 
 
@@ -79,7 +93,8 @@ def run_dbt(args: List[str] = None, expect_pass=True):
 # will turn the logs into json, so you have to be prepared for that.
 def run_dbt_and_capture(args: List[str] = None, expect_pass=True):
     try:
-        stringbuf = capture_stdout_logs()
+        stringbuf = StringIO()
+        capture_stdout_logs(stringbuf)
         res = run_dbt(args, expect_pass=expect_pass)
         stdout = stringbuf.getvalue()
 
@@ -212,6 +227,7 @@ class TestProcessingException(Exception):
 def run_sql_with_adapter(adapter, sql, fetch=None):
     if sql.strip() == "":
         return
+
     # substitute schema and database in sql
     kwargs = {
         "schema": adapter.config.credentials.schema,
@@ -225,7 +241,7 @@ def run_sql_with_adapter(adapter, sql, fetch=None):
         return adapter.run_sql_for_tests(sql, fetch, conn)
 
 
-# Get a Relation object from the identifer (name of table/view).
+# Get a Relation object from the identifier (name of table/view).
 # Uses the default database and schema. If you need a relation
 # with a different schema, it should be constructed in the test.
 # Uses:
@@ -305,7 +321,7 @@ def check_relation_types(adapter, relation_to_type):
 # by doing a separate call for each set of tables/relations.
 # Wraps check_relations_equal_with_relations by creating relations
 # from the list of names passed in.
-def check_relations_equal(adapter, relation_names, compare_snapshot_cols=False):
+def check_relations_equal(adapter, relation_names: List, compare_snapshot_cols=False):
     if len(relation_names) < 2:
         raise TestProcessingException(
             "Not enough relations to compare",
@@ -316,13 +332,26 @@ def check_relations_equal(adapter, relation_names, compare_snapshot_cols=False):
     )
 
 
+# Used to check that a particular relation has an expected schema
+# expected_schema should look like {"column_name": "expected datatype"}
+def check_relation_has_expected_schema(adapter, relation_name, expected_schema: Dict):
+    relation = relation_from_name(adapter, relation_name)
+    with get_connection(adapter):
+        actual_columns = {c.name: c.data_type for c in adapter.get_columns_in_relation(relation)}
+    assert (
+        actual_columns == expected_schema
+    ), f"Actual schema did not match expected, actual: {json.dumps(actual_columns)}"
+
+
 # This can be used when checking relations in different schemas, by supplying
 # a list of relations. Called by 'check_relations_equal'.
 # Uses:
 #    adapter.get_columns_in_relation
 #    adapter.get_rows_different_sql
 #    adapter.execute
-def check_relations_equal_with_relations(adapter, relations, compare_snapshot_cols=False):
+def check_relations_equal_with_relations(
+    adapter: Adapter, relations: List, compare_snapshot_cols=False
+):
 
     with get_connection(adapter):
         basis, compares = relations[0], relations[1:]
@@ -331,12 +360,12 @@ def check_relations_equal_with_relations(adapter, relations, compare_snapshot_co
         # (unless comparing "dbt_" snapshot columns is explicitly enabled)
         column_names = [
             c.name
-            for c in adapter.get_columns_in_relation(basis)
+            for c in adapter.get_columns_in_relation(basis)  # type: ignore
             if not c.name.lower().startswith("dbt_") or compare_snapshot_cols
         ]
 
         for relation in compares:
-            sql = adapter.get_rows_different_sql(basis, relation, column_names=column_names)
+            sql = adapter.get_rows_different_sql(basis, relation, column_names=column_names)  # type: ignore
             _, tbl = adapter.execute(sql, fetch=True)
             num_rows = len(tbl)
             assert (

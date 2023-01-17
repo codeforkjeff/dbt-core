@@ -1,14 +1,14 @@
 import os
 from typing import Any, Dict, Optional
 
+from dbt.constants import SECRET_ENV_PREFIX, DEFAULT_ENV_PLACEHOLDER
 from dbt.contracts.connection import AdapterRequiredConfig
-from dbt.logger import SECRET_ENV_PREFIX
 from dbt.node_types import NodeType
 from dbt.utils import MultiDict
 
 from dbt.context.base import contextproperty, contextmember, Var
 from dbt.context.target import TargetContext
-from dbt.exceptions import raise_parsing_error, disallow_secret_env_var
+from dbt.exceptions import EnvVarMissingError, SecretEnvVarLocationError
 
 
 class ConfiguredContext(TargetContext):
@@ -86,7 +86,7 @@ class SchemaYamlContext(ConfiguredContext):
     def env_var(self, var: str, default: Optional[str] = None) -> str:
         return_value = None
         if var.startswith(SECRET_ENV_PREFIX):
-            disallow_secret_env_var(var)
+            raise SecretEnvVarLocationError(var)
         if var in os.environ:
             return_value = os.environ[var]
         elif default is not None:
@@ -94,11 +94,17 @@ class SchemaYamlContext(ConfiguredContext):
 
         if return_value is not None:
             if self.schema_yaml_vars:
-                self.schema_yaml_vars.env_vars[var] = return_value
+                # If the environment variable is set from a default, store a string indicating
+                # that so we can skip partial parsing.  Otherwise the file will be scheduled for
+                # reparsing. If the default changes, the file will have been updated and therefore
+                # will be scheduled for reparsing anyways.
+                self.schema_yaml_vars.env_vars[var] = (
+                    return_value if var in os.environ else DEFAULT_ENV_PLACEHOLDER
+                )
+
             return return_value
         else:
-            msg = f"Env var required but not provided: '{var}'"
-            raise_parsing_error(msg)
+            raise EnvVarMissingError(var)
 
 
 class MacroResolvingContext(ConfiguredContext):

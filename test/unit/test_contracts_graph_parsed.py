@@ -9,26 +9,27 @@ from dbt.contracts.graph.model_config import (
     TestConfig,
     SnapshotConfig,
     SourceConfig,
+    ExposureConfig,
     EmptySnapshotConfig,
     Hook,
 )
-from dbt.contracts.graph.parsed import (
-    ParsedModelNode,
+from dbt.contracts.graph.nodes import (
+    ModelNode,
     DependsOn,
     ColumnInfo,
-    ParsedGenericTestNode,
-    ParsedSnapshotNode,
+    GenericTestNode,
+    SnapshotNode,
     IntermediateSnapshotNode,
     ParsedNodePatch,
-    ParsedMacro,
-    ParsedExposure,
-    ParsedMetric,
-    ParsedSeedNode,
+    Macro,
+    Exposure,
+    Metric,
+    SeedNode,
     Docs,
     MacroDependsOn,
-    ParsedSourceDefinition,
-    ParsedDocumentation,
-    ParsedHookNode,
+    SourceDefinition,
+    Documentation,
+    HookNode,
     ExposureOwner,
     TestMetadata,
 )
@@ -74,6 +75,7 @@ def populated_node_config_dict():
         'meta': {},
         'grants': {},
         'packages': [],
+        'docs': {'show': True},
     }
 
 
@@ -125,7 +127,6 @@ def test_config_same(unrendered_node_config_dict, func):
 def base_parsed_model_dict():
     return {
         'name': 'foo',
-        'root_path': '/root/',
         'created_at': 1.0,
         'resource_type': str(NodeType.Model),
         'path': '/root/x/path.sql',
@@ -156,6 +157,7 @@ def base_parsed_model_dict():
             'on_schema_change': 'ignore',
             'meta': {},
             'grants': {},
+            'docs': {'show': True},
         'packages': [],
         },
         'deferred': False,
@@ -170,9 +172,8 @@ def base_parsed_model_dict():
 
 @pytest.fixture
 def basic_parsed_model_object():
-    return ParsedModelNode(
+    return ModelNode(
         package_name='test',
-        root_path='/root/',
         path='/root/x/path.sql',
         original_file_path='/root/path.sql',
         language='sql',
@@ -201,7 +202,6 @@ def basic_parsed_model_object():
 def minimal_parsed_model_dict():
     return {
         'name': 'foo',
-        'root_path': '/root/',
         'created_at': 1.0,
         'resource_type': str(NodeType.Model),
         'path': '/root/x/path.sql',
@@ -223,7 +223,6 @@ def minimal_parsed_model_dict():
 def complex_parsed_model_dict():
     return {
         'name': 'foo',
-        'root_path': '/root/',
         'created_at': 1.0,
         'resource_type': str(NodeType.Model),
         'path': '/root/x/path.sql',
@@ -256,6 +255,7 @@ def complex_parsed_model_dict():
             'on_schema_change': 'ignore',
             'meta': {},
             'grants': {},
+            'docs': {'show': True},
         'packages': [],
         },
         'docs': {'show': True},
@@ -279,9 +279,8 @@ def complex_parsed_model_dict():
 
 @pytest.fixture
 def complex_parsed_model_object():
-    return ParsedModelNode(
+    return ModelNode(
         package_name='test',
-        root_path='/root/',
         path='/root/x/path.sql',
         original_file_path='/root/path.sql',
         language='sql',
@@ -343,14 +342,14 @@ def test_invalid_bad_tags(base_parsed_model_dict):
     # bad top-level field
     bad_tags = base_parsed_model_dict
     bad_tags['tags'] = 100
-    assert_fails_validation(bad_tags, ParsedModelNode)
+    assert_fails_validation(bad_tags, ModelNode)
 
 
 def test_invalid_bad_materialized(base_parsed_model_dict):
     # bad nested field
     bad_materialized = base_parsed_model_dict
     bad_materialized['config']['materialized'] = None
-    assert_fails_validation(bad_materialized, ParsedModelNode)
+    assert_fails_validation(bad_materialized, ModelNode)
 
 
 unchanged_nodes = [
@@ -424,20 +423,14 @@ def test_compare_changed_model(func, basic_parsed_model_object):
 def basic_parsed_seed_dict():
     return {
         'name': 'foo',
-        'root_path': '/root/',
         'created_at': 1.0,
         'resource_type': str(NodeType.Seed),
         'path': '/root/seeds/seed.csv',
         'original_file_path': 'seeds/seed.csv',
         'package_name': 'test',
-        'language': 'sql',
         'raw_code': '',
         'unique_id': 'seed.test.foo',
         'fqn': ['test', 'seeds', 'foo'],
-        'refs': [],
-        'sources': [],
-        'metrics': [],
-        'depends_on': {'macros': [], 'nodes': []},
         'database': 'test_db',
         'description': '',
         'schema': 'test_schema',
@@ -455,6 +448,7 @@ def basic_parsed_seed_dict():
             'on_schema_change': 'ignore',
             'meta': {},
             'grants': {},
+            'docs': {'show': True},
         'packages': [],
         },
         'deferred': False,
@@ -469,21 +463,15 @@ def basic_parsed_seed_dict():
 
 @pytest.fixture
 def basic_parsed_seed_object():
-    return ParsedSeedNode(
+    return SeedNode(
         name='foo',
-        root_path='/root/',
         resource_type=NodeType.Seed,
         path='/root/seeds/seed.csv',
         original_file_path='seeds/seed.csv',
         package_name='test',
-        language='sql',
         raw_code='',
         unique_id='seed.test.foo',
         fqn=['test', 'seeds', 'foo'],
-        refs=[],
-        sources=[],
-        metrics=[],
-        depends_on=DependsOn(),
         database='test_db',
         description='',
         schema='test_schema',
@@ -504,13 +492,11 @@ def basic_parsed_seed_object():
 def minimal_parsed_seed_dict():
     return {
         'name': 'foo',
-        'root_path': '/root/',
         'created_at': 1.0,
         'resource_type': str(NodeType.Seed),
         'path': '/root/seeds/seed.csv',
         'original_file_path': 'seeds/seed.csv',
         'package_name': 'test',
-        'language': 'sql',
         'raw_code': '',
         'unique_id': 'seed.test.foo',
         'fqn': ['test', 'seeds', 'foo'],
@@ -525,20 +511,14 @@ def minimal_parsed_seed_dict():
 def complex_parsed_seed_dict():
     return {
         'name': 'foo',
-        'root_path': '/root/',
         'created_at': 1.0,
         'resource_type': str(NodeType.Seed),
         'path': '/root/seeds/seed.csv',
         'original_file_path': 'seeds/seed.csv',
         'package_name': 'test',
-        'language': 'sql',
         'raw_code': '',
         'unique_id': 'seed.test.foo',
         'fqn': ['test', 'seeds', 'foo'],
-        'refs': [],
-        'sources': [],
-        'metrics': [],
-        'depends_on': {'macros': [], 'nodes': []},
         'database': 'test_db',
         'description': 'a description',
         'schema': 'test_schema',
@@ -557,6 +537,7 @@ def complex_parsed_seed_dict():
             'on_schema_change': 'ignore',
             'meta': {},
             'grants': {},
+            'docs': {'show': True},
         'packages': [],
         },
         'deferred': False,
@@ -573,21 +554,15 @@ def complex_parsed_seed_dict():
 
 @pytest.fixture
 def complex_parsed_seed_object():
-    return ParsedSeedNode(
+    return SeedNode(
         name='foo',
-        root_path='/root/',
         resource_type=NodeType.Seed,
         path='/root/seeds/seed.csv',
         original_file_path='seeds/seed.csv',
         package_name='test',
-        language='sql',
         raw_code='',
         unique_id='seed.test.foo',
         fqn=['test', 'seeds', 'foo'],
-        refs=[],
-        sources=[],
-        metrics=[],
-        depends_on=DependsOn(),
         database='test_db',
         description='a description',
         schema='test_schema',
@@ -609,10 +584,13 @@ def complex_parsed_seed_object():
 
 
 def test_seed_basic(basic_parsed_seed_dict, basic_parsed_seed_object, minimal_parsed_seed_dict):
+    dct = basic_parsed_seed_object.to_dict()
+
     assert_symmetric(basic_parsed_seed_object, basic_parsed_seed_dict)
+
     assert basic_parsed_seed_object.get_materialization() == 'seed'
 
-    assert_from_dict(basic_parsed_seed_object, minimal_parsed_seed_dict, ParsedSeedNode)
+    assert_from_dict(basic_parsed_seed_object, minimal_parsed_seed_dict, SeedNode)
 
 
 def test_seed_complex(complex_parsed_seed_dict, complex_parsed_seed_object):
@@ -723,9 +701,8 @@ def basic_parsed_model_patch_object():
 
 @pytest.fixture
 def patched_model_object():
-    return ParsedModelNode(
+    return ModelNode(
         package_name='test',
-        root_path='/root/',
         path='/root/x/path.sql',
         original_file_path='/root/path.sql',
         language='sql',
@@ -765,7 +742,6 @@ def test_patch_parsed_model(basic_parsed_model_object, basic_parsed_model_patch_
 def minimal_parsed_hook_dict():
     return {
         'name': 'foo',
-        'root_path': '/root/',
         'resource_type': str(NodeType.Operation),
         'path': '/root/x/path.sql',
         'original_file_path': '/root/path.sql',
@@ -785,7 +761,6 @@ def minimal_parsed_hook_dict():
 def base_parsed_hook_dict():
     return {
         'name': 'foo',
-        'root_path': '/root/',
         'created_at': 1.0,
         'resource_type': str(NodeType.Operation),
         'path': '/root/x/path.sql',
@@ -817,6 +792,7 @@ def base_parsed_hook_dict():
             'on_schema_change': 'ignore',
             'meta': {},
             'grants': {},
+            'docs': {'show': True},
         'packages': [],
         },
         'docs': {'show': True},
@@ -830,9 +806,8 @@ def base_parsed_hook_dict():
 
 @pytest.fixture
 def base_parsed_hook_object():
-    return ParsedHookNode(
+    return HookNode(
         package_name='test',
-        root_path='/root/',
         path='/root/x/path.sql',
         original_file_path='/root/path.sql',
         language='sql',
@@ -862,7 +837,6 @@ def base_parsed_hook_object():
 def complex_parsed_hook_dict():
     return {
         'name': 'foo',
-        'root_path': '/root/',
         'created_at': 1.0,
         'resource_type': str(NodeType.Operation),
         'path': '/root/x/path.sql',
@@ -895,6 +869,7 @@ def complex_parsed_hook_dict():
             'on_schema_change': 'ignore',
             'meta': {},
             'grants': {},
+            'docs': {'show': True},
         'packages': [],
         },
         'docs': {'show': True},
@@ -918,9 +893,8 @@ def complex_parsed_hook_dict():
 
 @pytest.fixture
 def complex_parsed_hook_object():
-    return ParsedHookNode(
+    return HookNode(
         package_name='test',
-        root_path='/root/',
         path='/root/x/path.sql',
         original_file_path='/root/path.sql',
         language='sql',
@@ -960,11 +934,11 @@ def test_basic_parsed_hook(minimal_parsed_hook_dict, base_parsed_hook_dict, base
     node_dict = base_parsed_hook_dict
     minimum = minimal_parsed_hook_dict
 
-    assert_symmetric(node, node_dict, ParsedHookNode)
+    assert_symmetric(node, node_dict, HookNode)
     assert node.empty is False
     assert node.is_refable is False
     assert node.get_materialization() == 'view'
-    assert_from_dict(node, minimum, ParsedHookNode)
+    assert_from_dict(node, minimum, HookNode)
     pickle.loads(pickle.dumps(node))
 
 
@@ -981,14 +955,13 @@ def test_complex_parsed_hook(complex_parsed_hook_dict, complex_parsed_hook_objec
 def test_invalid_hook_index_type(base_parsed_hook_dict):
     bad_index = base_parsed_hook_dict
     bad_index['index'] = 'a string!?'
-    assert_fails_validation(bad_index, ParsedHookNode)
+    assert_fails_validation(bad_index, HookNode)
 
 
 @pytest.fixture
 def minimal_parsed_schema_test_dict():
     return {
         'name': 'foo',
-        'root_path': '/root/',
         'created_at': 1.0,
         'resource_type': str(NodeType.Test),
         'path': '/root/x/path.sql',
@@ -1015,7 +988,6 @@ def minimal_parsed_schema_test_dict():
 def basic_parsed_schema_test_dict():
     return {
         'name': 'foo',
-        'root_path': '/root/',
         'created_at': 1.0,
         'resource_type': str(NodeType.Test),
         'path': '/root/x/path.sql',
@@ -1061,9 +1033,8 @@ def basic_parsed_schema_test_dict():
 
 @pytest.fixture
 def basic_parsed_schema_test_object():
-    return ParsedGenericTestNode(
+    return GenericTestNode(
         package_name='test',
-        root_path='/root/',
         path='/root/x/path.sql',
         original_file_path='/root/path.sql',
         language='sql',
@@ -1092,7 +1063,6 @@ def basic_parsed_schema_test_object():
 def complex_parsed_schema_test_dict():
     return {
         'name': 'foo',
-        'root_path': '/root/',
         'created_at': 1.0,
         'resource_type': str(NodeType.Test),
         'path': '/root/x/path.sql',
@@ -1155,9 +1125,8 @@ def complex_parsed_schema_test_object():
         severity='WARN'
     )
     cfg._extra.update({'extra_key': 'extra value'})
-    return ParsedGenericTestNode(
+    return GenericTestNode(
         package_name='test',
-        root_path='/root/',
         path='/root/x/path.sql',
         original_file_path='/root/path.sql',
         language='sql',
@@ -1193,20 +1162,20 @@ def test_basic_schema_test_node(minimal_parsed_schema_test_dict, basic_parsed_sc
     node = basic_parsed_schema_test_object
     node_dict = basic_parsed_schema_test_dict
     minimum = minimal_parsed_schema_test_dict
-    assert_symmetric(node, node_dict, ParsedGenericTestNode)
+    assert_symmetric(node, node_dict, GenericTestNode)
 
     assert node.empty is False
     assert node.is_ephemeral is False
     assert node.is_refable is False
     assert node.get_materialization() == 'test'
 
-    assert_from_dict(node, minimum, ParsedGenericTestNode)
+    assert_from_dict(node, minimum, GenericTestNode)
     pickle.loads(pickle.dumps(node))
 
 
 def test_complex_schema_test_node(complex_parsed_schema_test_dict, complex_parsed_schema_test_object):
     # this tests for the presence of _extra keys
-    node = complex_parsed_schema_test_object  # ParsedGenericTestNode
+    node = complex_parsed_schema_test_object  # GenericTestNode
     assert(node.config._extra['extra_key'])
     node_dict = complex_parsed_schema_test_dict
     assert_symmetric(node, node_dict)
@@ -1217,13 +1186,13 @@ def test_invalid_column_name_type(complex_parsed_schema_test_dict):
     # bad top-level field
     bad_column_name = complex_parsed_schema_test_dict
     bad_column_name['column_name'] = {}
-    assert_fails_validation(bad_column_name, ParsedGenericTestNode)
+    assert_fails_validation(bad_column_name, GenericTestNode)
 
 
 def test_invalid_severity(complex_parsed_schema_test_dict):
     invalid_config_value = complex_parsed_schema_test_dict
     invalid_config_value['config']['severity'] = 'WERROR'
-    assert_fails_validation(invalid_config_value, ParsedGenericTestNode)
+    assert_fails_validation(invalid_config_value, GenericTestNode)
 
 
 @pytest.fixture
@@ -1246,6 +1215,7 @@ def basic_timestamp_snapshot_config_dict():
         'meta': {},
         'grants': {},
         'packages': [],
+        'docs': {'show': True},
     }
 
 
@@ -1281,6 +1251,7 @@ def complex_timestamp_snapshot_config_dict():
         'meta': {},
         'grants': {},
         'packages': [],
+        'docs': {'show': True},
     }
 
 
@@ -1340,6 +1311,7 @@ def basic_check_snapshot_config_dict():
         'meta': {},
         'grants': {},
         'packages': [],
+        'docs': {'show': True},
     }
 
 
@@ -1375,6 +1347,7 @@ def complex_set_snapshot_config_dict():
         'meta': {},
         'grants': {},
         'packages': [],
+        'docs': {'show': True},
     }
 
 
@@ -1447,7 +1420,6 @@ def test_invalid_check_value(basic_check_snapshot_config_dict):
 def basic_timestamp_snapshot_dict():
     return {
         'name': 'foo',
-        'root_path': '/root/',
         'created_at': 1.0,
         'resource_type': str(NodeType.Snapshot),
         'path': '/root/x/path.sql',
@@ -1484,6 +1456,7 @@ def basic_timestamp_snapshot_dict():
             'on_schema_change': 'ignore',
             'meta': {},
             'grants': {},
+            'docs': {'show': True},
         'packages': [],
         },
         'docs': {'show': True},
@@ -1503,9 +1476,8 @@ def basic_timestamp_snapshot_dict():
 
 @pytest.fixture
 def basic_timestamp_snapshot_object():
-    return ParsedSnapshotNode(
+    return SnapshotNode(
         package_name='test',
-        root_path='/root/',
         path='/root/x/path.sql',
         original_file_path='/root/path.sql',
         language='sql',
@@ -1554,7 +1526,6 @@ def basic_intermediate_timestamp_snapshot_object():
 
     return IntermediateSnapshotNode(
         package_name='test',
-        root_path='/root/',
         path='/root/x/path.sql',
         original_file_path='/root/path.sql',
         language='sql',
@@ -1589,7 +1560,6 @@ def basic_intermediate_timestamp_snapshot_object():
 def basic_check_snapshot_dict():
     return {
         'name': 'foo',
-        'root_path': '/root/',
         'created_at': 1.0,
         'resource_type': str(NodeType.Snapshot),
         'path': '/root/x/path.sql',
@@ -1626,6 +1596,7 @@ def basic_check_snapshot_dict():
             'on_schema_change': 'ignore',
             'meta': {},
             'grants': {},
+            'docs': {'show': True},
         'packages': [],
         },
         'docs': {'show': True},
@@ -1645,9 +1616,8 @@ def basic_check_snapshot_dict():
 
 @pytest.fixture
 def basic_check_snapshot_object():
-    return ParsedSnapshotNode(
+    return SnapshotNode(
         package_name='test',
-        root_path='/root/',
         path='/root/x/path.sql',
         original_file_path='/root/path.sql',
         language='sql',
@@ -1696,7 +1666,6 @@ def basic_intermediate_check_snapshot_object():
 
     return IntermediateSnapshotNode(
         package_name='test',
-        root_path='/root/',
         path='/root/x/path.sql',
         original_file_path='/root/path.sql',
         language='sql',
@@ -1732,10 +1701,10 @@ def test_timestamp_snapshot_ok(basic_timestamp_snapshot_dict, basic_timestamp_sn
     node = basic_timestamp_snapshot_object
     inter = basic_intermediate_timestamp_snapshot_object
 
-    assert_symmetric(node, node_dict, ParsedSnapshotNode)
-#   node_from_dict = ParsedSnapshotNode.from_dict(inter.to_dict(omit_none=True))
+    assert_symmetric(node, node_dict, SnapshotNode)
+#   node_from_dict = SnapshotNode.from_dict(inter.to_dict(omit_none=True))
 #   node_from_dict.created_at = 1
-    assert ParsedSnapshotNode.from_dict(inter.to_dict(omit_none=True)) == node
+    assert SnapshotNode.from_dict(inter.to_dict(omit_none=True)) == node
     assert node.is_refable is True
     assert node.is_ephemeral is False
     pickle.loads(pickle.dumps(node))
@@ -1746,8 +1715,8 @@ def test_check_snapshot_ok(basic_check_snapshot_dict, basic_check_snapshot_objec
     node = basic_check_snapshot_object
     inter = basic_intermediate_check_snapshot_object
 
-    assert_symmetric(node, node_dict, ParsedSnapshotNode)
-    assert ParsedSnapshotNode.from_dict(inter.to_dict(omit_none=True)) == node
+    assert_symmetric(node, node_dict, SnapshotNode)
+    assert SnapshotNode.from_dict(inter.to_dict(omit_none=True)) == node
     assert node.is_refable is True
     assert node.is_ephemeral is False
     pickle.loads(pickle.dumps(node))
@@ -1756,7 +1725,7 @@ def test_check_snapshot_ok(basic_check_snapshot_dict, basic_check_snapshot_objec
 def test_invalid_snapshot_bad_resource_type(basic_timestamp_snapshot_dict):
     bad_resource_type = basic_timestamp_snapshot_dict
     bad_resource_type['resource_type'] = str(NodeType.Model)
-    assert_fails_validation(bad_resource_type, ParsedSnapshotNode)
+    assert_fails_validation(bad_resource_type, SnapshotNode)
 
 
 def test_basic_parsed_node_patch(basic_parsed_model_patch_object, basic_parsed_model_patch_dict):
@@ -1805,7 +1774,7 @@ def test_populated_parsed_node_patch(populated_parsed_node_patch_dict, populated
 
 
 class TestParsedMacro(ContractTestCase):
-    ContractType = ParsedMacro
+    ContractType = Macro
 
     def _ok_dict(self):
         return {
@@ -1815,10 +1784,8 @@ class TestParsedMacro(ContractTestCase):
             'created_at': 1.0,
             'package_name': 'test',
             'macro_sql': '{% macro foo() %}select 1 as id{% endmacro %}',
-            'root_path': '/root/',
             'resource_type': 'macro',
             'unique_id': 'macro.test.foo',
-            'tags': [],
             'depends_on': {'macros': []},
             'meta': {},
             'description': 'my macro description',
@@ -1834,10 +1801,8 @@ class TestParsedMacro(ContractTestCase):
             original_file_path='/root/path.sql',
             package_name='test',
             macro_sql='{% macro foo() %}select 1 as id{% endmacro %}',
-            root_path='/root/',
             resource_type=NodeType.Macro,
             unique_id='macro.test.foo',
-            tags=[],
             depends_on=MacroDependsOn(),
             meta={},
             description='my macro description',
@@ -1858,16 +1823,16 @@ class TestParsedMacro(ContractTestCase):
 
 
 class TestParsedDocumentation(ContractTestCase):
-    ContractType = ParsedDocumentation
+    ContractType = Documentation
 
     def _ok_dict(self):
         return {
             'block_contents': 'some doc contents',
             'name': 'foo',
+            'resource_type': 'doc',
             'original_file_path': '/root/docs/doc.md',
             'package_name': 'test',
             'path': '/root/docs',
-            'root_path': '/root',
             'unique_id': 'test.foo',
         }
 
@@ -1875,12 +1840,12 @@ class TestParsedDocumentation(ContractTestCase):
         doc_dict = self._ok_dict()
         doc = self.ContractType(
             package_name='test',
-            root_path='/root',
             path='/root/docs',
             original_file_path='/root/docs/doc.md',
             name='foo',
             unique_id='test.foo',
-            block_contents='some doc contents'
+            block_contents='some doc contents',
+            resource_type=NodeType.Documentation,
         )
         self.assert_symmetric(doc, doc_dict)
         pickle.loads(pickle.dumps(doc))
@@ -1900,7 +1865,6 @@ class TestParsedDocumentation(ContractTestCase):
 def minimum_parsed_source_definition_dict():
     return {
         'package_name': 'test',
-        'root_path': '/root',
         'path': '/root/models/sources.yml',
         'original_file_path': '/root/models/sources.yml',
         'created_at': 1.0,
@@ -1921,7 +1885,6 @@ def minimum_parsed_source_definition_dict():
 def basic_parsed_source_definition_dict():
     return {
         'package_name': 'test',
-        'root_path': '/root',
         'path': '/root/models/sources.yml',
         'original_file_path': '/root/models/sources.yml',
         'created_at': 1.0,
@@ -1950,7 +1913,7 @@ def basic_parsed_source_definition_dict():
 
 @pytest.fixture
 def basic_parsed_source_definition_object():
-    return ParsedSourceDefinition(
+    return SourceDefinition(
         columns={},
         database='some_db',
         description='',
@@ -1963,7 +1926,6 @@ def basic_parsed_source_definition_object():
         path='/root/models/sources.yml',
         quoting=Quoting(),
         resource_type=NodeType.Source,
-        root_path='/root',
         schema='some_schema',
         source_description='my source description',
         source_name='my_source',
@@ -1977,7 +1939,6 @@ def basic_parsed_source_definition_object():
 def complex_parsed_source_definition_dict():
     return {
         'package_name': 'test',
-        'root_path': '/root',
         'path': '/root/models/sources.yml',
         'original_file_path': '/root/models/sources.yml',
         'created_at': 1.0,
@@ -2011,7 +1972,7 @@ def complex_parsed_source_definition_dict():
 
 @pytest.fixture
 def complex_parsed_source_definition_object():
-    return ParsedSourceDefinition(
+    return SourceDefinition(
         columns={},
         database='some_db',
         description='',
@@ -2024,7 +1985,6 @@ def complex_parsed_source_definition_object():
         path='/root/models/sources.yml',
         quoting=Quoting(),
         resource_type=NodeType.Source,
-        root_path='/root',
         schema='some_schema',
         source_description='my source description',
         source_name='my_source',
@@ -2041,32 +2001,32 @@ def test_basic_source_definition(minimum_parsed_source_definition_dict, basic_pa
     node_dict = basic_parsed_source_definition_dict
     minimum = minimum_parsed_source_definition_dict
 
-    assert_symmetric(node, node_dict, ParsedSourceDefinition)
+    assert_symmetric(node, node_dict, SourceDefinition)
 
     assert node.is_ephemeral is False
     assert node.is_refable is False
     assert node.has_freshness is False
 
-    assert_from_dict(node, minimum, ParsedSourceDefinition)
+    assert_from_dict(node, minimum, SourceDefinition)
     pickle.loads(pickle.dumps(node))
 
 
 def test_invalid_missing(minimum_parsed_source_definition_dict):
     bad_missing_name = minimum_parsed_source_definition_dict
     del bad_missing_name['name']
-    assert_fails_validation(bad_missing_name, ParsedSourceDefinition)
+    assert_fails_validation(bad_missing_name, SourceDefinition)
 
 
 def test_invalid_bad_resource_type(minimum_parsed_source_definition_dict):
     bad_resource_type = minimum_parsed_source_definition_dict
     bad_resource_type['resource_type'] = str(NodeType.Model)
-    assert_fails_validation(bad_resource_type, ParsedSourceDefinition)
+    assert_fails_validation(bad_resource_type, SourceDefinition)
 
 
 def test_complex_source_definition(complex_parsed_source_definition_dict, complex_parsed_source_definition_object):
     node = complex_parsed_source_definition_object
     node_dict = complex_parsed_source_definition_dict
-    assert_symmetric(node, node_dict, ParsedSourceDefinition)
+    assert_symmetric(node, node_dict, SourceDefinition)
 
     assert node.is_ephemeral is False
     assert node.is_refable is False
@@ -2132,10 +2092,10 @@ def minimal_parsed_exposure_dict():
         'meta': {},
         'tags': [],
         'path': 'models/something.yml',
-        'root_path': '/usr/src/app',
         'original_file_path': 'models/something.yml',
         'description': '',
         'created_at': 1.0,
+        'resource_type': 'exposure',
     }
 
 
@@ -2154,34 +2114,40 @@ def basic_parsed_exposure_dict():
         },
         'refs': [],
         'sources': [],
+        'metrics': [],
         'fqn': ['test', 'exposures', 'my_exposure'],
         'unique_id': 'exposure.test.my_exposure',
         'package_name': 'test',
         'path': 'models/something.yml',
-        'root_path': '/usr/src/app',
         'original_file_path': 'models/something.yml',
         'description': '',
         'meta': {},
         'tags': [],
         'created_at': 1.0,
+        'config': {
+            'enabled': True,
+        },
+        'unrendered_config': {},
     }
 
 
 @pytest.fixture
 def basic_parsed_exposure_object():
-    return ParsedExposure(
+    return Exposure(
         name='my_exposure',
+        resource_type=NodeType.Exposure,
         type=ExposureType.Notebook,
         fqn=['test', 'exposures', 'my_exposure'],
         unique_id='exposure.test.my_exposure',
         package_name='test',
         path='models/something.yml',
-        root_path='/usr/src/app',
         original_file_path='models/something.yml',
         owner=ExposureOwner(email='test@example.com'),
         description='',
         meta={},
-        tags=[]
+        tags=[],
+        config=ExposureConfig(),
+        unrendered_config={},
     )
 
 
@@ -2210,19 +2176,24 @@ def complex_parsed_exposure_dict():
         },
         'refs': [],
         'sources': [],
+        'metrics': [],
         'fqn': ['test', 'exposures', 'my_exposure'],
         'unique_id': 'exposure.test.my_exposure',
         'package_name': 'test',
         'path': 'models/something.yml',
-        'root_path': '/usr/src/app',
         'original_file_path': 'models/something.yml',
+        'config': {
+            'enabled': True,
+        },
+        'unrendered_config': {},
     }
 
 
 @pytest.fixture
 def complex_parsed_exposure_object():
-    return ParsedExposure(
+    return Exposure(
         name='my_exposure',
+        resource_type=NodeType.Exposure,
         type=ExposureType.Analysis,
         owner=ExposureOwner(email='test@example.com', name='A Name'),
         maturity=MaturityType.Low,
@@ -2235,19 +2206,20 @@ def complex_parsed_exposure_object():
         unique_id='exposure.test.my_exposure',
         package_name='test',
         path='models/something.yml',
-        root_path='/usr/src/app',
         original_file_path='models/something.yml',
+        config=ExposureConfig(),
+        unrendered_config={},
     )
 
 
 def test_basic_parsed_exposure(minimal_parsed_exposure_dict, basic_parsed_exposure_dict, basic_parsed_exposure_object):
-    assert_symmetric(basic_parsed_exposure_object, basic_parsed_exposure_dict, ParsedExposure)
-    assert_from_dict(basic_parsed_exposure_object, minimal_parsed_exposure_dict, ParsedExposure)
+    assert_symmetric(basic_parsed_exposure_object, basic_parsed_exposure_dict, Exposure)
+    assert_from_dict(basic_parsed_exposure_object, minimal_parsed_exposure_dict, Exposure)
     pickle.loads(pickle.dumps(basic_parsed_exposure_object))
 
 
 def test_complex_parsed_exposure(complex_parsed_exposure_dict, complex_parsed_exposure_object):
-    assert_symmetric(complex_parsed_exposure_object, complex_parsed_exposure_dict, ParsedExposure)
+    assert_symmetric(complex_parsed_exposure_object, complex_parsed_exposure_dict, Exposure)
 
 
 unchanged_parsed_exposures = [
@@ -2292,7 +2264,6 @@ def minimal_parsed_metric_dict():
         'meta': {},
         'tags': [],
         'path': 'models/something.yml',
-        'root_path': '/usr/src/app',
         'original_file_path': 'models/something.yml',
         'description': '',
         'created_at': 1.0,
@@ -2305,8 +2276,8 @@ def basic_parsed_metric_dict():
         'name': 'new_customers',
         'label': 'New Customers',
         'model': 'ref("dim_customers")',
-        'type': 'count',
-        'sql': 'user_id',
+        'calculation_method': 'count',
+        'expression': 'user_id',
         'timestamp': 'signup_date',
         'time_grains': ['day', 'week', 'month'],
         'dimensions': ['plan', 'country'],
@@ -2325,7 +2296,6 @@ def basic_parsed_metric_dict():
         'unique_id': 'metric.test.my_metric',
         'package_name': 'test',
         'path': 'models/something.yml',
-        'root_path': '/usr/src/app',
         'original_file_path': 'models/something.yml',
         'description': '',
         'meta': {},
@@ -2340,14 +2310,14 @@ def basic_parsed_metric_dict():
 
 @pytest.fixture
 def basic_parsed_metric_object():
-    return ParsedMetric(
+    return Metric(
         name='my_metric',
-        type='count',
+        resource_type=NodeType.Metric,
+        calculation_method='count',
         fqn=['test', 'metrics', 'my_metric'],
         unique_id='metric.test.my_metric',
         package_name='test',
         path='models/something.yml',
-        root_path='/usr/src/app',
         original_file_path='models/something.yml',
         description='',
         meta={},

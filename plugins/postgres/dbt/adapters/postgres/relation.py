@@ -1,7 +1,7 @@
 from dbt.adapters.base import Column
 from dataclasses import dataclass
 from dbt.adapters.base.relation import BaseRelation
-from dbt.exceptions import RuntimeException
+from dbt.exceptions import DbtRuntimeError
 
 
 @dataclass(frozen=True, eq=False, repr=False)
@@ -14,7 +14,7 @@ class PostgresRelation(BaseRelation):
             and self.type is not None
             and len(self.identifier) > self.relation_max_name_length()
         ):
-            raise RuntimeException(
+            raise DbtRuntimeError(
                 f"Relation name '{self.identifier}' "
                 f"is longer than {self.relation_max_name_length()} characters"
             )
@@ -26,7 +26,9 @@ class PostgresRelation(BaseRelation):
 class PostgresColumn(Column):
     @property
     def data_type(self):
-        # on postgres, do not convert 'text' to 'varchar()'
-        if self.dtype.lower() == "text":
+        # on postgres, do not convert 'text' or 'varchar' to 'varchar()'
+        if self.dtype.lower() == "text" or (
+            self.dtype.lower() == "character varying" and self.char_size is None
+        ):
             return self.dtype
         return super().data_type

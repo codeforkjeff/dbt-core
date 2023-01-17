@@ -13,6 +13,7 @@ from typing import Optional, List, ContextManager, Callable, Dict, Any, Set
 
 import colorama
 import logbook
+from dbt.constants import SECRET_ENV_PREFIX
 from dbt.dataclass_schema import dbtClassMixin
 
 # Colorama is needed for colored logs on Windows because we're using logger.info
@@ -27,11 +28,7 @@ if sys.platform == "win32" and (not os.getenv("TERM") or os.getenv("TERM") == "N
     colorama.init(wrap=True)
 
 STDOUT_LOG_FORMAT = "{record.message}"
-DEBUG_LOG_FORMAT = (
-    "{record.time:%Y-%m-%d %H:%M:%S.%f%z} " "({record.thread_name}): " "{record.message}"
-)
-
-SECRET_ENV_PREFIX = "DBT_ENV_SECRET_"
+DEBUG_LOG_FORMAT = "{record.time:%Y-%m-%d %H:%M:%S.%f%z} ({record.thread_name}): {record.message}"
 
 
 def get_secret_env() -> List[str]:
@@ -192,11 +189,6 @@ class Relevel(logbook.Processor):
         # our target level.
         else:
             record.level = self.target_level
-
-
-class JsonOnly(logbook.Processor):
-    def process(self, record):
-        record.extra["json_only"] = True
 
 
 class TextOnly(logbook.Processor):

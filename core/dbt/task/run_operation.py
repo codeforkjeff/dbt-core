@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Dict, Any
+import traceback
 
 import agate
 
@@ -9,12 +10,12 @@ import dbt.exceptions
 from dbt.adapters.factory import get_adapter
 from dbt.config.utils import parse_cli_vars
 from dbt.contracts.results import RunOperationResultsArtifact
-from dbt.exceptions import InternalException
+from dbt.exceptions import DbtInternalError
 from dbt.events.functions import fire_event
 from dbt.events.types import (
     RunningOperationCaughtError,
     RunningOperationUncaughtError,
-    PrintDebugStackTrace,
+    LogDebugStackTrace,
 )
 
 
@@ -33,7 +34,7 @@ class RunOperationTask(ManifestTask):
 
     def compile_manifest(self) -> None:
         if self.manifest is None:
-            raise InternalException("manifest was None in compile_manifest")
+            raise DbtInternalError("manifest was None in compile_manifest")
 
     def _run_unsafe(self) -> agate.Table:
         adapter = get_adapter(self.config)
@@ -55,12 +56,12 @@ class RunOperationTask(ManifestTask):
         try:
             self._run_unsafe()
         except dbt.exceptions.Exception as exc:
-            fire_event(RunningOperationCaughtError(exc=exc))
-            fire_event(PrintDebugStackTrace())
+            fire_event(RunningOperationCaughtError(exc=str(exc)))
+            fire_event(LogDebugStackTrace(exc_info=traceback.format_exc()))
             success = False
         except Exception as exc:
-            fire_event(RunningOperationUncaughtError(exc=exc))
-            fire_event(PrintDebugStackTrace())
+            fire_event(RunningOperationUncaughtError(exc=str(exc)))
+            fire_event(LogDebugStackTrace(exc_info=traceback.format_exc()))
             success = False
         else:
             success = True

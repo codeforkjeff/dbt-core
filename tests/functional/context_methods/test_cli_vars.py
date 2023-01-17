@@ -1,8 +1,11 @@
 import pytest
 import yaml
 
+from tests.fixtures.dbt_integration_project import dbt_integration_project  # noqa: F401
+
 from dbt.tests.util import run_dbt, get_artifact, write_config_file
-from dbt.exceptions import RuntimeException, CompilationException
+from dbt.tests.fixtures.project import write_project_files
+from dbt.exceptions import DbtRuntimeError, CompilationError
 
 
 models_complex__schema_yml = """
@@ -111,13 +114,17 @@ class TestCLIVarsProfile:
         profile = dbt_profile_data
         profile["test"]["outputs"]["default"]["host"] = "{{ var('db_host') }}"
         write_config_file(profile, project.profiles_dir, "profiles.yml")
-        with pytest.raises(RuntimeException):
+        with pytest.raises(DbtRuntimeError):
             results = run_dbt(["run"])
         results = run_dbt(["run", "--vars", "db_host: localhost"])
         assert len(results) == 1
 
 
 class TestCLIVarsPackages:
+    @pytest.fixture(scope="class", autouse=True)
+    def setUp(self, project_root, dbt_integration_project):  # noqa: F811
+        write_project_files(project_root, "dbt_integration_project", dbt_integration_project)
+
     @pytest.fixture(scope="class")
     def models(self):
         return {
@@ -127,14 +134,7 @@ class TestCLIVarsPackages:
 
     @pytest.fixture(scope="class")
     def packages_config(self):
-        return {
-            "packages": [
-                {
-                    "git": "https://github.com/dbt-labs/dbt-integration-project",
-                    "revision": "1.1",
-                }
-            ]
-        }
+        return {"packages": [{"local": "dbt_integration_project"}]}
 
     def test_cli_vars_in_packages(self, project, packages_config):
         # Run working deps and run commands
@@ -144,15 +144,15 @@ class TestCLIVarsPackages:
 
         # Change packages.yml to contain a var
         packages = packages_config
-        packages["packages"][0]["revision"] = "{{ var('dip_version') }}"
+        packages["packages"][0]["local"] = "{{ var('path_to_project') }}"
         write_config_file(packages, project.project_root, "packages.yml")
 
         # Without vars args deps fails
-        with pytest.raises(RuntimeException):
+        with pytest.raises(DbtRuntimeError):
             run_dbt(["deps"])
 
         # With vars arg deps succeeds
-        results = run_dbt(["deps", "--vars", "dip_version: 1.1"])
+        results = run_dbt(["deps", "--vars", "path_to_project: dbt_integration_project"])
         assert results is None
 
 
@@ -200,7 +200,7 @@ class TestCLIVarsSelectors:
 
         # Update the selectors.yml file to have a var
         write_config_file(var_selectors_yml, project.project_root, "selectors.yml")
-        with pytest.raises(CompilationException):
+        with pytest.raises(CompilationError):
             run_dbt(["run"])
 
         # Var in cli_vars works

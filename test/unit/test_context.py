@@ -10,15 +10,16 @@ from dbt.adapters import postgres
 from dbt.adapters import factory
 from dbt.adapters.base import AdapterConfig
 from dbt.clients.jinja import MacroStack
-from dbt.contracts.graph.parsed import (
-    ParsedModelNode,
+from dbt.contracts.graph.nodes import (
+    ModelNode,
     NodeConfig,
     DependsOn,
-    ParsedMacro,
+    Macro,
 )
 from dbt.config.project import VarProvider
 from dbt.context import base, target, configured, providers, docs, manifest, macros
 from dbt.contracts.files import FileHash
+from dbt.events.functions import reset_metadata_vars
 from dbt.node_types import NodeType
 import dbt.exceptions
 from .utils import (
@@ -32,7 +33,7 @@ from .mock_adapter import adapter_factory
 
 class TestVar(unittest.TestCase):
     def setUp(self):
-        self.model = ParsedModelNode(
+        self.model = ModelNode(
             alias="model_one",
             name="model_one",
             database="dbt",
@@ -42,7 +43,6 @@ class TestVar(unittest.TestCase):
             fqn=["root", "model_one"],
             package_name="root",
             original_file_path="model_one.sql",
-            root_path="/usr/src/app",
             refs=[],
             sources=[],
             depends_on=DependsOn(),
@@ -89,7 +89,7 @@ class TestVar(unittest.TestCase):
         var = providers.RuntimeVar(self.context, self.config, self.model)
 
         self.assertEqual(var("foo", "bar"), "bar")
-        with self.assertRaises(dbt.exceptions.CompilationException):
+        with self.assertRaises(dbt.exceptions.CompilationError):
             var("foo")
 
     def test_parser_var_default_something(self):
@@ -200,14 +200,15 @@ REQUIRED_BASE_KEYS = frozenset(
         "modules",
         "flags",
         "print",
-        "diff_of_two_dicts"
+        "diff_of_two_dicts",
+        "local_md5"
     }
 )
 
 REQUIRED_TARGET_KEYS = REQUIRED_BASE_KEYS | {"target"}
 REQUIRED_DOCS_KEYS = REQUIRED_TARGET_KEYS | {"project_name"} | {"doc"}
 MACROS = frozenset({"macro_a", "macro_b", "root", "dbt"})
-REQUIRED_QUERY_HEADER_KEYS = REQUIRED_TARGET_KEYS | {"project_name"} | MACROS
+REQUIRED_QUERY_HEADER_KEYS = REQUIRED_TARGET_KEYS | {"project_name", "context_macro_stack"} | MACROS
 REQUIRED_MACRO_KEYS = REQUIRED_QUERY_HEADER_KEYS | {
     "_sql_results",
     "load_result",
@@ -238,8 +239,11 @@ REQUIRED_MACRO_KEYS = REQUIRED_QUERY_HEADER_KEYS | {
     "sql_now",
     "adapter_macro",
     "selected_resources",
+    "invocation_args_dict",
+    "submit_python_job",
+    "dbt_metadata_envs"
 }
-REQUIRED_MODEL_KEYS = REQUIRED_MACRO_KEYS | {"this", "compiled_code",}
+REQUIRED_MODEL_KEYS = REQUIRED_MACRO_KEYS | {"this", "compiled_code"}
 MAYBE_KEYS = frozenset({"debug"})
 
 
@@ -269,7 +273,7 @@ PROJECT_DATA = {
 
 
 def model():
-    return ParsedModelNode(
+    return ModelNode(
         alias="model_one",
         name="model_one",
         database="dbt",
@@ -279,7 +283,6 @@ def model():
         fqn=["root", "model_one"],
         package_name="root",
         original_file_path="model_one.sql",
-        root_path="/usr/src/app",
         refs=[],
         sources=[],
         depends_on=DependsOn(),
@@ -312,7 +315,7 @@ def test_base_context():
 
 def mock_macro(name, package_name):
     macro = mock.MagicMock(
-        __class__=ParsedMacro,
+        __class__=Macro,
         package_name=package_name,
         resource_type="macro",
         unique_id=f"macro.{package_name}.{name}",
@@ -332,7 +335,7 @@ def mock_manifest(config):
 
 def mock_model():
     return mock.MagicMock(
-        __class__=ParsedModelNode,
+        __class__=ModelNode,
         alias="model_one",
         name="model_one",
         database="dbt",
@@ -342,7 +345,6 @@ def mock_model():
         fqn=["root", "model_one"],
         package_name="root",
         original_file_path="model_one.sql",
-        root_path="/usr/src/app",
         refs=[],
         sources=[],
         depends_on=DependsOn(),
@@ -417,6 +419,21 @@ def test_macro_runtime_context(config_postgres, manifest_fx, get_adapter, get_in
     )
     assert_has_keys(REQUIRED_MACRO_KEYS, MAYBE_KEYS, ctx)
 
+def test_invocation_args_to_dict_in_macro_runtime_context(
+    config_postgres, manifest_fx, get_adapter, get_include_paths
+):
+    ctx = providers.generate_runtime_macro_context(
+        macro=manifest_fx.macros["macro.root.macro_a"],
+        config=config_postgres,
+        manifest=manifest_fx,
+        package_name="root",
+    )
+
+    # Comes from dbt/flags.py as they are the only values set that aren't None at default
+    assert ctx["invocation_args_dict"]["printer_width"] == 80
+
+    # Comes from unit/utils.py config_from_parts_or_dicts method
+    assert ctx["invocation_args_dict"]["profile_dir"] == "/dev/null"
 
 def test_model_parse_context(config_postgres, manifest_fx, get_adapter, get_include_paths):
     ctx = providers.generate_parser_model_context(
@@ -447,7 +464,7 @@ def test_macro_namespace_duplicates(config_postgres, manifest_fx):
     mn.add_macros(manifest_fx.macros.values(), {})
 
     # same pkg, same name: error
-    with pytest.raises(dbt.exceptions.CompilationException):
+    with pytest.raises(dbt.exceptions.CompilationError):
         mn.add_macro(mock_macro("macro_a", "root"), {})
 
     # different pkg, same name: no error
@@ -482,3 +499,26 @@ def test_macro_namespace(config_postgres, manifest_fx):
         assert result["dbt"]["some_macro"].macro is pg_macro
         assert result["root"]["some_macro"].macro is package_macro
         assert result["some_macro"].macro is package_macro
+
+def test_dbt_metadata_envs(monkeypatch, config_postgres, manifest_fx, get_adapter, get_include_paths):
+    reset_metadata_vars()
+    
+    envs = {
+        "DBT_ENV_CUSTOM_ENV_RUN_ID": 1234,
+        "DBT_ENV_CUSTOM_ENV_JOB_ID": 5678,
+        "DBT_ENV_RUN_ID": 91011,
+        "RANDOM_ENV": 121314
+    }
+    monkeypatch.setattr(os, 'environ', envs)
+
+    ctx = providers.generate_runtime_macro_context(
+        macro=manifest_fx.macros["macro.root.macro_a"],
+        config=config_postgres,
+        manifest=manifest_fx,
+        package_name="root",
+    ) 
+
+    assert ctx["dbt_metadata_envs"] == {'JOB_ID': 5678, 'RUN_ID': 1234}
+
+    # cleanup
+    reset_metadata_vars()

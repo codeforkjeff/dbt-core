@@ -1,6 +1,6 @@
 from copy import deepcopy
 from dbt.context.context_config import ContextConfig
-from dbt.contracts.graph.parsed import ParsedModelNode
+from dbt.contracts.graph.nodes import ModelNode
 import dbt.flags as flags
 from dbt.events.functions import fire_event
 from dbt.events.types import (
@@ -29,7 +29,16 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 # New for Python models :p
 import ast
 from dbt.dataclass_schema import ValidationError
-from dbt.exceptions import ParsingException, validator_error_message, UndefinedMacroException
+from dbt.exceptions import (
+    ModelConfigError,
+    ParsingError,
+    PythonLiteralEvalError,
+    PythonParsingError,
+    UndefinedMacroError,
+)
+
+dbt_function_key_words = set(["ref", "source", "config", "get"])
+dbt_function_full_names = set(["dbt.ref", "dbt.source", "dbt.config", "dbt.config.get"])
 
 
 class PythonValidationVisitor(ast.NodeVisitor):
@@ -41,7 +50,7 @@ class PythonValidationVisitor(ast.NodeVisitor):
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         if node.name == "model":
             self.num_model_def += 1
-            if not node.args.args[0].arg == "dbt":
+            if node.args.args and not node.args.args[0].arg == "dbt":
                 self.dbt_errors.append("'dbt' not provided for model as the first argument")
             if len(node.args.args) != 2:
                 self.dbt_errors.append(
@@ -57,9 +66,13 @@ class PythonValidationVisitor(ast.NodeVisitor):
 
     def check_error(self, node):
         if self.num_model_def != 1:
-            raise ParsingException("dbt only allow one model defined per python file", node=node)
+            raise ParsingError(
+                f"dbt allows exactly one model defined per python file, found {self.num_model_def}",
+                node=node,
+            )
+
         if len(self.dbt_errors) != 0:
-            raise ParsingException("\n".join(self.dbt_errors), node=node)
+            raise ParsingError("\n".join(self.dbt_errors), node=node)
 
 
 class PythonParseVisitor(ast.NodeVisitor):
@@ -82,12 +95,8 @@ class PythonParseVisitor(ast.NodeVisitor):
     def _safe_eval(self, node):
         try:
             return ast.literal_eval(node)
-        except (SyntaxError, ValueError, TypeError) as exc:
-            msg = validator_error_message(exc)
-            raise ParsingException(msg, node=self.dbt_node) from exc
-        except (MemoryError, RecursionError) as exc:
-            msg = validator_error_message(exc)
-            raise ParsingException(msg, node=self.dbt_node) from exc
+        except (SyntaxError, ValueError, TypeError, MemoryError, RecursionError) as exc:
+            raise PythonLiteralEvalError(exc, node=self.dbt_node) from exc
 
     def _get_call_literals(self, node):
         # List of literals
@@ -108,13 +117,40 @@ class PythonParseVisitor(ast.NodeVisitor):
         return arg_literals, kwarg_literals
 
     def visit_Call(self, node: ast.Call) -> None:
+        # check weather the current call could be a dbt function call
+        if isinstance(node.func, ast.Attribute) and node.func.attr in dbt_function_key_words:
+            func_name = self._flatten_attr(node.func)
+            # check weather the current call really is a dbt function call
+            if func_name in dbt_function_full_names:
+                # drop the dot-dbt prefix
+                func_name = func_name.split(".")[-1]
+                args, kwargs = self._get_call_literals(node)
+                self.dbt_function_calls.append((func_name, args, kwargs))
 
-        func_name = self._flatten_attr(node.func)
-        if func_name in ["dbt.ref", "dbt.source", "dbt.config", "dbt.config.get"]:
-            # drop the dot-dbt prefix
-            func_name = func_name.split(".")[-1]
-            args, kwargs = self._get_call_literals(node)
-            self.dbt_function_calls.append((func_name, args, kwargs))
+        # no matter what happened above, we should keep visiting the rest of the tree
+        # visit args and kwargs to see if there's call in it
+        for obj in node.args + [kwarg.value for kwarg in node.keywords]:
+            if isinstance(obj, ast.Call):
+                self.visit_Call(obj)
+            # support dbt.ref in list args, kwargs
+            elif isinstance(obj, ast.List) or isinstance(obj, ast.Tuple):
+                for el in obj.elts:
+                    if isinstance(el, ast.Call):
+                        self.visit_Call(el)
+            # support dbt.ref in dict args, kwargs
+            elif isinstance(obj, ast.Dict):
+                for value in obj.values:
+                    if isinstance(value, ast.Call):
+                        self.visit_Call(value)
+        # visit node.func.value if we are at an call attr
+        if isinstance(node.func, ast.Attribute):
+            self.attribute_helper(node.func)
+
+    def attribute_helper(self, node: ast.Attribute) -> None:
+        while isinstance(node, ast.Attribute):
+            node = node.value  # type: ignore
+        if isinstance(node, ast.Call):
+            self.visit_Call(node)
 
     def visit_Import(self, node: ast.Import) -> None:
         for n in node.names:
@@ -140,16 +176,16 @@ def verify_python_model_code(node):
             node,
         )
         if rendered_python != node.raw_code:
-            raise ParsingException("")
-    except (UndefinedMacroException, ParsingException):
-        raise ParsingException("No jinja in python model code is allowed", node=node)
+            raise ParsingError("")
+    except (UndefinedMacroError, ParsingError):
+        raise ParsingError("No jinja in python model code is allowed", node=node)
 
 
-class ModelParser(SimpleSQLParser[ParsedModelNode]):
-    def parse_from_dict(self, dct, validate=True) -> ParsedModelNode:
+class ModelParser(SimpleSQLParser[ModelNode]):
+    def parse_from_dict(self, dct, validate=True) -> ModelNode:
         if validate:
-            ParsedModelNode.validate(dct)
-        return ParsedModelNode.from_dict(dct)
+            ModelNode.validate(dct)
+        return ModelNode.from_dict(dct)
 
     @property
     def resource_type(self) -> NodeType:
@@ -160,32 +196,54 @@ class ModelParser(SimpleSQLParser[ParsedModelNode]):
         return block.path.relative_path
 
     def parse_python_model(self, node, config, context):
+        config_keys_used = []
+        config_keys_defaults = []
+
         try:
             tree = ast.parse(node.raw_code, filename=node.original_file_path)
         except SyntaxError as exc:
-            msg = validator_error_message(exc)
-            raise ParsingException(f"{msg}\n{exc.text}", node=node) from exc
+            raise PythonParsingError(exc, node=node) from exc
 
-        # We are doing a validator and a parser because visit_FunctionDef in parser
-        # would actually make the parser not doing the visit_Calls any more
-        dbtValidator = PythonValidationVisitor()
-        dbtValidator.visit(tree)
-        dbtValidator.check_error(node)
+        # Only parse if AST tree has instructions in body
+        if tree.body:
+            # We are doing a validator and a parser because visit_FunctionDef in parser
+            # would actually make the parser not doing the visit_Calls any more
+            dbt_validator = PythonValidationVisitor()
+            dbt_validator.visit(tree)
+            dbt_validator.check_error(node)
 
-        dbtParser = PythonParseVisitor(node)
-        dbtParser.visit(tree)
+            dbt_parser = PythonParseVisitor(node)
+            dbt_parser.visit(tree)
 
-        for (func, args, kwargs) in dbtParser.dbt_function_calls:
-            # TODO decide what we want to do with detected packages
-            # if func == "config":
-            #     kwargs["detected_packages"] = dbtParser.packages
-            if func == "get":
-                context["config"](utilized=args)
-                continue
+            for (func, args, kwargs) in dbt_parser.dbt_function_calls:
+                if func == "get":
+                    num_args = len(args)
+                    if num_args == 0:
+                        raise ParsingError(
+                            "dbt.config.get() requires at least one argument",
+                            node=node,
+                        )
+                    if num_args > 2:
+                        raise ParsingError(
+                            f"dbt.config.get() takes at most 2 arguments ({num_args} given)",
+                            node=node,
+                        )
+                    key = args[0]
+                    default_value = args[1] if num_args == 2 else None
+                    config_keys_used.append(key)
+                    config_keys_defaults.append(default_value)
+                    continue
 
-            context[func](*args, **kwargs)
+                context[func](*args, **kwargs)
 
-    def render_update(self, node: ParsedModelNode, config: ContextConfig) -> None:
+        if config_keys_used:
+            # this is being used in macro build_config_dict
+            context["config"](
+                config_keys_used=config_keys_used,
+                config_keys_defaults=config_keys_defaults,
+            )
+
+    def render_update(self, node: ModelNode, config: ContextConfig) -> None:
         self.manifest._parsing_info.static_analysis_path_count += 1
 
         if node.language == ModelLanguage.python:
@@ -197,8 +255,7 @@ class ModelParser(SimpleSQLParser[ParsedModelNode]):
 
             except ValidationError as exc:
                 # we got a ValidationError - probably bad types in config()
-                msg = validator_error_message(exc)
-                raise ParsingException(msg, node=node) from exc
+                raise ModelConfigError(exc, node=node) from exc
             return
 
         elif not flags.STATIC_PARSER:
@@ -230,9 +287,9 @@ class ModelParser(SimpleSQLParser[ParsedModelNode]):
         # top-level declaration of variables
         statically_parsed: Optional[Union[str, Dict[str, List[Any]]]] = None
         experimental_sample: Optional[Union[str, Dict[str, List[Any]]]] = None
-        exp_sample_node: Optional[ParsedModelNode] = None
+        exp_sample_node: Optional[ModelNode] = None
         exp_sample_config: Optional[ContextConfig] = None
-        jinja_sample_node: Optional[ParsedModelNode] = None
+        jinja_sample_node: Optional[ModelNode] = None
         jinja_sample_config: Optional[ContextConfig] = None
         result: List[str] = []
 
@@ -333,9 +390,7 @@ class ModelParser(SimpleSQLParser[ParsedModelNode]):
                     }
                 )
 
-    def run_static_parser(
-        self, node: ParsedModelNode
-    ) -> Optional[Union[str, Dict[str, List[Any]]]]:
+    def run_static_parser(self, node: ModelNode) -> Optional[Union[str, Dict[str, List[Any]]]]:
         # if any banned macros have been overridden by the user, we cannot use the static parser.
         if self._has_banned_macro(node):
             # this log line is used for integration testing. If you change
@@ -357,7 +412,7 @@ class ModelParser(SimpleSQLParser[ParsedModelNode]):
             return "cannot_parse"
 
     def run_experimental_parser(
-        self, node: ParsedModelNode
+        self, node: ModelNode
     ) -> Optional[Union[str, Dict[str, List[Any]]]]:
         # if any banned macros have been overridden by the user, we cannot use the static parser.
         if self._has_banned_macro(node):
@@ -383,7 +438,7 @@ class ModelParser(SimpleSQLParser[ParsedModelNode]):
             return "cannot_parse"
 
     # checks for banned macros
-    def _has_banned_macro(self, node: ParsedModelNode) -> bool:
+    def _has_banned_macro(self, node: ModelNode) -> bool:
         # first check if there is a banned macro defined in scope for this model file
         root_project_name = self.root_project.project_name
         project_name = node.package_name
@@ -403,9 +458,7 @@ class ModelParser(SimpleSQLParser[ParsedModelNode]):
     # this method updates the model node rendered and unrendered config as well
     # as the node object. Used to populate these values when circumventing jinja
     # rendering like the static parser.
-    def populate(
-        self, node: ParsedModelNode, config: ContextConfig, statically_parsed: Dict[str, Any]
-    ):
+    def populate(self, node: ModelNode, config: ContextConfig, statically_parsed: Dict[str, Any]):
         # manually fit configs in
         config._config_call_dict = _get_config_call_dict(statically_parsed)
 
@@ -453,9 +506,9 @@ def _shift_sources(static_parser_result: Dict[str, List[Any]]) -> Dict[str, List
 
 # returns a list of string codes to be sent as a tracking event
 def _get_exp_sample_result(
-    sample_node: ParsedModelNode,
+    sample_node: ModelNode,
     sample_config: ContextConfig,
-    node: ParsedModelNode,
+    node: ModelNode,
     config: ContextConfig,
 ) -> List[str]:
     result: List[Tuple[int, str]] = _get_sample_result(sample_node, sample_config, node, config)
@@ -469,9 +522,9 @@ def _get_exp_sample_result(
 
 # returns a list of string codes to be sent as a tracking event
 def _get_stable_sample_result(
-    sample_node: ParsedModelNode,
+    sample_node: ModelNode,
     sample_config: ContextConfig,
-    node: ParsedModelNode,
+    node: ModelNode,
     config: ContextConfig,
 ) -> List[str]:
     result: List[Tuple[int, str]] = _get_sample_result(sample_node, sample_config, node, config)
@@ -486,9 +539,9 @@ def _get_stable_sample_result(
 # returns a list of string codes that need a single digit prefix to be prepended
 # before being sent as a tracking event
 def _get_sample_result(
-    sample_node: ParsedModelNode,
+    sample_node: ModelNode,
     sample_config: ContextConfig,
-    node: ParsedModelNode,
+    node: ModelNode,
     config: ContextConfig,
 ) -> List[Tuple[int, str]]:
     result: List[Tuple[int, str]] = []

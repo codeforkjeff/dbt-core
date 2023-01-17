@@ -25,18 +25,26 @@ from dbt.utils import (
 )
 
 from dbt.clients._jinja_blocks import BlockIterator, BlockData, BlockTag
-from dbt.contracts.graph.compiled import CompiledGenericTestNode
-from dbt.contracts.graph.parsed import ParsedGenericTestNode
+from dbt.contracts.graph.nodes import GenericTestNode
+
 from dbt.exceptions import (
-    InternalException,
-    raise_compiler_error,
-    CompilationException,
-    invalid_materialization_argument,
+    CaughtMacroError,
+    CaughtMacroErrorWithNodeError,
+    CompilationError,
+    DbtInternalError,
+    MaterializationArgError,
+    JinjaRenderingError,
     MacroReturn,
-    JinjaRenderingException,
-    UndefinedMacroException,
+    MaterializtionMacroNotUsedError,
+    NoSupportedLanguagesFoundError,
+    UndefinedCompilationError,
+    UndefinedMacroError,
 )
 from dbt import flags
+from dbt.node_types import ModelLanguage
+
+
+SUPPORTED_LANG_ARG = jinja2.nodes.Name("supported_languages", "param")
 
 
 def _linecache_inject(source, write):
@@ -153,9 +161,9 @@ def quoted_native_concat(nodes):
     except (ValueError, SyntaxError, MemoryError):
         result = raw
     if isinstance(raw, BoolMarker) and not isinstance(result, bool):
-        raise JinjaRenderingException(f"Could not convert value '{raw!s}' into type 'bool'")
+        raise JinjaRenderingError(f"Could not convert value '{raw!s}' into type 'bool'")
     if isinstance(raw, NumberMarker) and not _is_number(result):
-        raise JinjaRenderingException(f"Could not convert value '{raw!s}' into type 'number'")
+        raise JinjaRenderingError(f"Could not convert value '{raw!s}' into type 'number'")
 
     return result
 
@@ -233,12 +241,12 @@ class BaseMacroGenerator:
         try:
             yield
         except (TypeError, jinja2.exceptions.TemplateRuntimeError) as e:
-            raise_compiler_error(str(e))
+            raise CaughtMacroError(e)
 
     def call_macro(self, *args, **kwargs):
         # called from __call__ methods
         if self.context is None:
-            raise InternalException("Context is still None in call_macro!")
+            raise DbtInternalError("Context is still None in call_macro!")
         assert self.context is not None
 
         macro = self.get_macro()
@@ -265,7 +273,7 @@ class MacroStack(threading.local):
     def pop(self, name):
         got = self.call_stack.pop()
         if got != name:
-            raise InternalException(f"popped {got}, expected {name}")
+            raise DbtInternalError(f"popped {got}, expected {name}")
 
 
 class MacroGenerator(BaseMacroGenerator):
@@ -292,8 +300,8 @@ class MacroGenerator(BaseMacroGenerator):
         try:
             yield
         except (TypeError, jinja2.exceptions.TemplateRuntimeError) as e:
-            raise_compiler_error(str(e), self.macro)
-        except CompilationException as e:
+            raise CaughtMacroErrorWithNodeError(exc=e, node=self.macro)
+        except CompilationError as e:
             e.stack.append(self.macro)
             raise e
 
@@ -301,13 +309,13 @@ class MacroGenerator(BaseMacroGenerator):
     @contextmanager
     def track_call(self):
         # This is only called from __call__
-        if self.stack is None or self.node is None:
+        if self.stack is None:
             yield
         else:
             unique_id = self.macro.unique_id
             depth = self.stack.depth
-            # only mark depth=0 as a dependency
-            if depth == 0:
+            # only mark depth=0 as a dependency, when creating this dependency we don't pass in stack
+            if depth == 0 and self.node:
                 self.node.depends_on.add_macro(unique_id)
             self.stack.push(unique_id)
             try:
@@ -364,8 +372,19 @@ class MaterializationExtension(jinja2.ext.Extension):
                 value = parser.parse_expression()
                 adapter_name = value.value
 
+            elif target.name == "supported_languages":
+                target.set_ctx("param")
+                node.args.append(target)
+                parser.stream.expect("assign")
+                languages = parser.parse_expression()
+                node.defaults.append(languages)
+
             else:
-                invalid_materialization_argument(materialization_name, target.name)
+                raise MaterializationArgError(materialization_name, target.name)
+
+        if SUPPORTED_LANG_ARG not in node.args:
+            node.args.append(SUPPORTED_LANG_ARG)
+            node.defaults.append(jinja2.nodes.List([jinja2.nodes.Const("sql")]))
 
         node.name = get_materialization_macro_name(materialization_name, adapter_name)
 
@@ -436,7 +455,7 @@ def create_undefined(node=None):
             return self
 
         def __reduce__(self):
-            raise_compiler_error(f"{self.name} is undefined", node=node)
+            raise UndefinedCompilationError(name=self.name, node=node)
 
     return Undefined
 
@@ -494,10 +513,10 @@ def catch_jinja(node=None) -> Iterator[None]:
         yield
     except jinja2.exceptions.TemplateSyntaxError as e:
         e.translated = False
-        raise CompilationException(str(e), node) from e
+        raise CompilationError(str(e), node) from e
     except jinja2.exceptions.UndefinedError as e:
-        raise UndefinedMacroException(str(e), node) from e
-    except CompilationException as exc:
+        raise UndefinedMacroError(str(e), node) from e
+    except CompilationError as exc:
         exc.add_node(node)
         raise
 
@@ -604,7 +623,7 @@ GENERIC_TEST_KWARGS_NAME = "_dbt_generic_test_kwargs"
 
 def add_rendered_test_kwargs(
     context: Dict[str, Any],
-    node: Union[ParsedGenericTestNode, CompiledGenericTestNode],
+    node: GenericTestNode,
     capture_macros: bool = False,
 ) -> None:
     """Render each of the test kwargs in the given context using the native
@@ -632,3 +651,21 @@ def add_rendered_test_kwargs(
     # when the test node was created in _parse_generic_test.
     kwargs = deep_map_render(_convert_function, node.test_metadata.kwargs)
     context[GENERIC_TEST_KWARGS_NAME] = kwargs
+
+
+def get_supported_languages(node: jinja2.nodes.Macro) -> List[ModelLanguage]:
+    if "materialization" not in node.name:
+        raise MaterializtionMacroNotUsedError(node=node)
+
+    no_kwargs = not node.defaults
+    no_langs_found = SUPPORTED_LANG_ARG not in node.args
+
+    if no_kwargs or no_langs_found:
+        raise NoSupportedLanguagesFoundError(node=node)
+
+    lang_idx = node.args.index(SUPPORTED_LANG_ARG)
+    # indexing defaults from the end
+    # since supported_languages is a kwarg, and kwargs are at always after args
+    return [
+        ModelLanguage[item.value] for item in node.defaults[-(len(node.args) - lang_idx)].items
+    ]

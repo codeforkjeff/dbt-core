@@ -1,14 +1,15 @@
 import json
 
-from dbt.contracts.graph.parsed import ParsedExposure, ParsedSourceDefinition, ParsedMetric
+from dbt.contracts.graph.nodes import Exposure, SourceDefinition, Metric
 from dbt.graph import ResourceTypeSelector
 from dbt.task.runnable import GraphRunnableTask, ManifestTask
 from dbt.task.test import TestSelector
 from dbt.node_types import NodeType
-from dbt.exceptions import RuntimeException, InternalException, warn_or_error
+from dbt.events.functions import warn_or_error
+from dbt.events.types import NoNodesSelected
+from dbt.exceptions import DbtRuntimeError, DbtInternalError
 from dbt.logger import log_manager
-import logging
-import dbt.events.functions as event_logger
+from dbt.events.eventmgr import EventLevel
 
 
 class ListTask(GraphRunnableTask):
@@ -43,9 +44,9 @@ class ListTask(GraphRunnableTask):
         super().__init__(args, config)
         if self.args.models:
             if self.args.select:
-                raise RuntimeException('"models" and "select" are mutually exclusive arguments')
+                raise DbtRuntimeError('"models" and "select" are mutually exclusive arguments')
             if self.args.resource_types:
-                raise RuntimeException(
+                raise DbtRuntimeError(
                     '"models" and "resource_type" are mutually exclusive ' "arguments"
                 )
 
@@ -60,19 +61,18 @@ class ListTask(GraphRunnableTask):
         #  - mutating the initialized, not-yet-configured STDOUT event logger
         #    because it's being configured too late -- bad! TODO refactor!
         log_manager.stderr_console()
-        event_logger.STDOUT_LOG.level = logging.WARN
         super().pre_init_hook(args)
-        return logging.WARN
+        return EventLevel.WARN
 
     def _iterate_selected_nodes(self):
         selector = self.get_node_selector()
         spec = self.get_selection_spec()
         nodes = sorted(selector.get_selected(spec))
         if not nodes:
-            warn_or_error("No nodes selected!")
+            warn_or_error(NoNodesSelected())
             return
         if self.manifest is None:
-            raise InternalException("manifest is None in _iterate_selected_nodes")
+            raise DbtInternalError("manifest is None in _iterate_selected_nodes")
         for node in nodes:
             if node in self.manifest.nodes:
                 yield self.manifest.nodes[node]
@@ -83,7 +83,7 @@ class ListTask(GraphRunnableTask):
             elif node in self.manifest.metrics:
                 yield self.manifest.metrics[node]
             else:
-                raise RuntimeException(
+                raise DbtRuntimeError(
                     f'Got an unexpected result from node selection: "{node}"'
                     f"Expected a source or a node!"
                 )
@@ -91,17 +91,17 @@ class ListTask(GraphRunnableTask):
     def generate_selectors(self):
         for node in self._iterate_selected_nodes():
             if node.resource_type == NodeType.Source:
-                assert isinstance(node, ParsedSourceDefinition)
+                assert isinstance(node, SourceDefinition)
                 # sources are searched for by pkg.source_name.table_name
                 source_selector = ".".join([node.package_name, node.source_name, node.name])
                 yield f"source:{source_selector}"
             elif node.resource_type == NodeType.Exposure:
-                assert isinstance(node, ParsedExposure)
+                assert isinstance(node, Exposure)
                 # exposures are searched for by pkg.exposure_name
                 exposure_selector = ".".join([node.package_name, node.name])
                 yield f"exposure:{exposure_selector}"
             elif node.resource_type == NodeType.Metric:
-                assert isinstance(node, ParsedMetric)
+                assert isinstance(node, Metric)
                 # metrics are searched for by pkg.metric_name
                 metric_selector = ".".join([node.package_name, node.name])
                 yield f"metric:{metric_selector}"
@@ -143,7 +143,7 @@ class ListTask(GraphRunnableTask):
         elif output == "path":
             generator = self.generate_paths
         else:
-            raise InternalException("Invalid output {}".format(output))
+            raise DbtInternalError("Invalid output {}".format(output))
 
         return self.output_results(generator())
 
@@ -179,9 +179,13 @@ class ListTask(GraphRunnableTask):
         else:
             return self.args.select
 
+    def defer_to_manifest(self, adapter, selected_uids):
+        # list don't defer
+        return
+
     def get_node_selector(self):
         if self.manifest is None or self.graph is None:
-            raise InternalException("manifest and graph must be set to get perform node selection")
+            raise DbtInternalError("manifest and graph must be set to get perform node selection")
         if self.resource_types == [NodeType.Test]:
             return TestSelector(
                 graph=self.graph,

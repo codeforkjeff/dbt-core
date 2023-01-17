@@ -7,7 +7,7 @@ from dbt.contracts.graph.unparsed import (
     FreshnessThreshold, Quoting, UnparsedSourceDefinition,
     UnparsedSourceTableDefinition, UnparsedDocumentationFile, UnparsedColumn,
     UnparsedNodeUpdate, Docs, UnparsedExposure, MaturityType, ExposureOwner,
-    ExposureType, UnparsedMetric, MetricFilter
+    ExposureType, UnparsedMetric, MetricFilter, MetricTime, MetricTimePeriod
 )
 from dbt.contracts.results import FreshnessStatus
 from dbt.node_types import NodeType
@@ -24,7 +24,6 @@ class TestUnparsedMacro(ContractTestCase):
             'package_name': 'test',
             'language': 'sql',
             'raw_code': '{% macro foo() %}select 1 as id{% endmacro %}',
-            'root_path': '/root/',
             'resource_type': 'macro',
         }
         macro = self.ContractType(
@@ -33,7 +32,6 @@ class TestUnparsedMacro(ContractTestCase):
             package_name='test',
             language='sql',
             raw_code='{% macro foo() %}select 1 as id{% endmacro %}',
-            root_path='/root/',
             resource_type=NodeType.Macro,
         )
         self.assert_symmetric(macro, macro_dict)
@@ -46,7 +44,6 @@ class TestUnparsedMacro(ContractTestCase):
             # 'package_name': 'test',
             'language': 'sql',
             'raw_code': '{% macro foo() %}select 1 as id{% endmacro %}',
-            'root_path': '/root/',
             'resource_type': 'macro',
         }
         self.assert_fails_validation(macro_dict)
@@ -58,7 +55,6 @@ class TestUnparsedMacro(ContractTestCase):
             'package_name': 'test',
             'language': 'sql',
             'raw_code': '{% macro foo() %}select 1 as id{% endmacro %}',
-            'root_path': '/root/',
             'extra': 'extra',
             'resource_type': 'macro',
         }
@@ -71,7 +67,6 @@ class TestUnparsedNode(ContractTestCase):
     def test_ok(self):
         node_dict = {
             'name': 'foo',
-            'root_path': '/root/',
             'resource_type': NodeType.Model,
             'path': '/root/x/path.sql',
             'original_file_path': '/root/path.sql',
@@ -81,7 +76,6 @@ class TestUnparsedNode(ContractTestCase):
         }
         node = self.ContractType(
             package_name='test',
-            root_path='/root/',
             path='/root/x/path.sql',
             original_file_path='/root/path.sql',
             language='sql',
@@ -99,7 +93,6 @@ class TestUnparsedNode(ContractTestCase):
     def test_empty(self):
         node_dict = {
             'name': 'foo',
-            'root_path': '/root/',
             'resource_type': NodeType.Model,
             'path': '/root/x/path.sql',
             'original_file_path': '/root/path.sql',
@@ -109,7 +102,6 @@ class TestUnparsedNode(ContractTestCase):
         }
         node = UnparsedNode(
             package_name='test',
-            root_path='/root/',
             path='/root/x/path.sql',
             original_file_path='/root/path.sql',
             language='sql',
@@ -126,7 +118,6 @@ class TestUnparsedNode(ContractTestCase):
     def test_bad_type(self):
         node_dict = {
             'name': 'foo',
-            'root_path': '/root/',
             'resource_type': NodeType.Source,  # not valid!
             'path': '/root/x/path.sql',
             'original_file_path': '/root/path.sql',
@@ -143,7 +134,6 @@ class TestUnparsedRunHook(ContractTestCase):
     def test_ok(self):
         node_dict = {
             'name': 'foo',
-            'root_path': 'test/dbt_project.yml',
             'resource_type': NodeType.Operation,
             'path': '/root/dbt_project.yml',
             'original_file_path': '/root/dbt_project.yml',
@@ -154,7 +144,6 @@ class TestUnparsedRunHook(ContractTestCase):
         }
         node = self.ContractType(
             package_name='test',
-            root_path='test/dbt_project.yml',
             path='/root/dbt_project.yml',
             original_file_path='/root/dbt_project.yml',
             language='sql',
@@ -170,7 +159,6 @@ class TestUnparsedRunHook(ContractTestCase):
     def test_bad_type(self):
         node_dict = {
             'name': 'foo',
-            'root_path': 'test/dbt_project.yml',
             'resource_type': NodeType.Model,  # invalid
             'path': '/root/dbt_project.yml',
             'original_file_path': '/root/dbt_project.yml',
@@ -365,14 +353,12 @@ class TestUnparsedDocumentationFile(ContractTestCase):
     def test_ok(self):
         doc = self.ContractType(
             package_name='test',
-            root_path='/root',
             path='/root/docs',
             original_file_path='/root/docs/doc.md',
             file_contents='blah blah blah',
         )
         doc_dict = {
             'package_name': 'test',
-            'root_path': '/root',
             'path': '/root/docs',
             'original_file_path': '/root/docs/doc.md',
             'file_contents': 'blah blah blah',
@@ -386,7 +372,6 @@ class TestUnparsedDocumentationFile(ContractTestCase):
         self.assert_fails_validation({})
         doc_dict = {
             'package_name': 'test',
-            'root_path': '/root',
             'path': '/root/docs',
             'original_file_path': '/root/docs/doc.md',
             'file_contents': 'blah blah blah',
@@ -606,6 +591,7 @@ class TestUnparsedExposure(ContractTestCase):
             'tags': ['my_department'],
             'url': 'https://example.com/dashboards/1',
             'description': 'A exposure',
+            'config': {},
             'depends_on': [
                 'ref("my_model")',
                 'source("raw", "source_table")',
@@ -620,6 +606,7 @@ class TestUnparsedExposure(ContractTestCase):
             maturity=MaturityType.Medium,
             url='https://example.com/dashboards/1',
             description='A exposure',
+            config={},
             meta={'tool': 'my_tool'},
             tags=['my_department'],
             depends_on=['ref("my_model")', 'source("raw", "source_table")'],
@@ -685,8 +672,9 @@ class TestUnparsedMetric(ContractTestCase):
             'label': 'New Customers',
             'model': 'ref("dim_customers")',
             'description': 'New customers',
-            'type': 'count',
-            'sql': 'user_id',
+            'calculation_method': 'count',
+            'expression': 'user_id',
+            'config': {},
             'timestamp': 'signup_date',
             'time_grains': ['day', 'week', 'month'],
             'dimensions': ['plan', 'country'],
@@ -697,23 +685,31 @@ class TestUnparsedMetric(ContractTestCase):
                     "operator": "=",
                 }
             ],
+            'window': {
+                    "count": 14,
+                    "period": "day"
+                }
+            ,
             'tags': [],
             'meta': {
                 'is_okr': True
             },
         }
 
-    def get_ok_expression_dict(self):
+    def get_ok_derived_dict(self):
         return {
             'name': 'arpc',
             'label': 'revenue per customer',
             'description': '',
-            'type': 'expression',
-            'sql': "{{ metric('revenue') }} / {{ metric('customers') }}",
+            'calculation_method': 'derived',
+            'expression': "{{ metric('revenue') }} / {{ metric('customers') }}",
+            'config': {},
             'time_grains': ['day', 'week', 'month'],
+            'timestamp': 'signup_date',
             'dimensions': [],
             'filters': [],
             'tags': [],
+            'window': {},
             'meta': {
                 'is_okr': True
             },
@@ -725,8 +721,9 @@ class TestUnparsedMetric(ContractTestCase):
             label='New Customers',
             model='ref("dim_customers")',
             description="New customers",
-            type='count',
-            sql="user_id",
+            calculation_method='count',
+            expression="user_id",
+            config={},
             timestamp="signup_date",
             time_grains=['day', 'week', 'month'],
             dimensions=['plan', 'country'],
@@ -735,6 +732,10 @@ class TestUnparsedMetric(ContractTestCase):
                 value='True',
                 operator="=",
             )],
+            window=MetricTime(
+                count=14,
+                period=MetricTimePeriod.day
+            ),
             meta={'is_okr': True},
         )
         dct = self.get_ok_dict()
@@ -742,33 +743,35 @@ class TestUnparsedMetric(ContractTestCase):
         pickle.loads(pickle.dumps(metric))
 
     def test_ok_metric_no_model(self):
-        # Expression metrics do not have model properties
+        # Derived metrics do not have model properties
         metric = self.ContractType(
             name='arpc',
             label='revenue per customer',
             model=None,
             description="",
-            type='expression',
-            sql="{{ metric('revenue') }} / {{ metric('customers') }}",
-            timestamp=None,
+            calculation_method='derived',
+            expression="{{ metric('revenue') }} / {{ metric('customers') }}",
+            timestamp="signup_date",
+            config={},
             time_grains=['day', 'week', 'month'],
+            window=MetricTime(),
             dimensions=[],
             meta={'is_okr': True},
         )
-        dct = self.get_ok_expression_dict()
+        dct = self.get_ok_derived_dict()
         self.assert_symmetric(metric, dct)
         pickle.loads(pickle.dumps(metric))
 
-    def test_bad_metric_no_type(self):
+    def test_bad_metric_no_calculation_method(self):
         tst = self.get_ok_dict()
-        del tst['type']
+        del tst['calculation_method']
         self.assert_fails_validation(tst)
 
     def test_bad_metric_no_model(self):
         tst = self.get_ok_dict()
-        # Metrics with type='expression' do not have model props
+        # Metrics with calculation_type='derived' do not have model props
         tst['model'] = None
-        tst['type'] = 'sum'
+        tst['calculation_method'] = 'sum'
         self.assert_fails_validation(tst)
 
     def test_bad_filter_missing_things(self):

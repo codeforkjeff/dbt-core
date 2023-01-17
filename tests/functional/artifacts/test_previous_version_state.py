@@ -2,12 +2,26 @@ import pytest
 import os
 import shutil
 from dbt.tests.util import run_dbt
-from dbt.exceptions import IncompatibleSchemaException
+from dbt.exceptions import IncompatibleSchemaError
 from dbt.contracts.graph.manifest import WritableManifest
 
 # This is a *very* simple project, with just one model in it.
 models__my_model_sql = """
 select 1 as id
+"""
+
+# Use old attribute names (v1.0-1.2) to test forward/backward compatibility with the rename in v1.3
+models__metric_yml = """
+version: 2
+metrics:
+  - name: my_metric
+    label: Count records
+    model: ref('my_model')
+
+    type: count
+    sql: "*"
+    timestamp: updated_at
+    time_grains: [day]
 """
 
 # SETUP: Using this project, we have run past minor versions of dbt
@@ -28,11 +42,11 @@ select 1 as id
 
 
 class TestPreviousVersionState:
-    CURRENT_EXPECTED_MANIFEST_VERSION = 7
+    CURRENT_EXPECTED_MANIFEST_VERSION = 8
 
     @pytest.fixture(scope="class")
     def models(self):
-        return {"my_model.sql": models__my_model_sql}
+        return {"my_model.sql": models__my_model_sql, "metric.yml": models__metric_yml}
 
     # Use this method when generating a new manifest version for the first time.
     # Once generated, we shouldn't need to re-generate or modify the manifest.
@@ -70,7 +84,7 @@ class TestPreviousVersionState:
             results = run_dbt(cli_args, expect_pass=expect_pass)
             assert len(results) == 0
         else:
-            with pytest.raises(IncompatibleSchemaException):
+            with pytest.raises(IncompatibleSchemaError):
                 run_dbt(cli_args, expect_pass=expect_pass)
 
     def test_compare_state_current(self, project):
@@ -78,7 +92,8 @@ class TestPreviousVersionState:
         assert (
             current_schema_version == self.CURRENT_EXPECTED_MANIFEST_VERSION
         ), "Sounds like you've bumped the manifest version and need to update this test!"
-        self.generate_latest_manifest(project, current_schema_version)
+        # If we need a newly generated manifest, uncomment the following line and commit the result
+        # self.generate_latest_manifest(project, current_schema_version)
         self.compare_previous_state(project, current_schema_version, True)
 
     def test_backwards_compatible_versions(self, project):

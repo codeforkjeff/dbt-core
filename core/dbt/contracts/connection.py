@@ -12,10 +12,11 @@ from typing import (
     List,
     Callable,
 )
-from dbt.exceptions import InternalException
+from dbt.exceptions import DbtInternalError
 from dbt.utils import translate_aliases
 from dbt.events.functions import fire_event
 from dbt.events.types import NewConnectionOpening
+from dbt.events.contextvars import get_node_info
 from typing_extensions import Protocol
 from dbt.dataclass_schema import (
     dbtClassMixin,
@@ -93,8 +94,8 @@ class Connection(ExtensibleDbtClassMixin, Replaceable):
                 # this will actually change 'self._handle'.
                 self._handle.resolve(self)
             except RecursionError as exc:
-                raise InternalException(
-                    "A connection's open() method attempted to read the " "handle value"
+                raise DbtInternalError(
+                    "A connection's open() method attempted to read the handle value"
                 ) from exc
         return self._handle
 
@@ -112,7 +113,9 @@ class LazyHandle:
         self.opener = opener
 
     def resolve(self, connection: Connection) -> Connection:
-        fire_event(NewConnectionOpening(connection_state=connection.state))
+        fire_event(
+            NewConnectionOpening(connection_state=connection.state, node_info=get_node_info())
+        )
         return self.opener(connection)
 
 

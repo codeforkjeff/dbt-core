@@ -16,19 +16,19 @@ import hashlib
 import os
 
 from dbt import flags, deprecations
-from dbt.clients.system import resolve_path_from_base
-from dbt.clients.system import path_exists
-from dbt.clients.system import load_file_contents
+from dbt.clients.system import path_exists, resolve_path_from_base, load_file_contents
 from dbt.clients.yaml_helper import load_yaml_text
 from dbt.contracts.connection import QueryComment
-from dbt.exceptions import DbtProjectError
-from dbt.exceptions import SemverException
-from dbt.exceptions import validator_error_message
-from dbt.exceptions import RuntimeException
+from dbt.exceptions import (
+    DbtProjectError,
+    SemverError,
+    ProjectContractBrokenError,
+    ProjectContractError,
+    DbtRuntimeError,
+)
 from dbt.graph import SelectionSpec
 from dbt.helper_types import NoValue
-from dbt.semver import VersionSpecifier
-from dbt.semver import versions_compatible
+from dbt.semver import VersionSpecifier, versions_compatible
 from dbt.version import get_installed_version
 from dbt.utils import MultiDict
 from dbt.node_types import NodeType
@@ -219,7 +219,7 @@ def _get_required_version(
 
     try:
         dbt_version = _parse_versions(dbt_raw_version)
-    except SemverException as e:
+    except SemverError as e:
         raise DbtProjectError(str(e)) from e
 
     if verify_version:
@@ -248,7 +248,7 @@ class PartialProject(RenderComponents):
     project_name: Optional[str] = field(
         metadata=dict(
             description=(
-                "The name of the project. This should always be set and will not " "be rendered"
+                "The name of the project. This should always be set and will not be rendered"
             )
         )
     )
@@ -325,7 +325,7 @@ class PartialProject(RenderComponents):
             ProjectContract.validate(rendered.project_dict)
             cfg = ProjectContract.from_dict(rendered.project_dict)
         except ValidationError as e:
-            raise DbtProjectError(validator_error_message(e)) from e
+            raise ProjectContractError(e) from e
         # name/version are required in the Project definition, so we can assume
         # they are present
         name = cfg.name
@@ -380,6 +380,8 @@ class PartialProject(RenderComponents):
         snapshots: Dict[str, Any]
         sources: Dict[str, Any]
         tests: Dict[str, Any]
+        metrics: Dict[str, Any]
+        exposures: Dict[str, Any]
         vars_value: VarProvider
 
         dispatch = cfg.dispatch
@@ -388,6 +390,8 @@ class PartialProject(RenderComponents):
         snapshots = cfg.snapshots
         sources = cfg.sources
         tests = cfg.tests
+        metrics = cfg.metrics
+        exposures = cfg.exposures
         if cfg.vars is None:
             vars_dict: Dict[str, Any] = {}
         else:
@@ -441,6 +445,8 @@ class PartialProject(RenderComponents):
             query_comment=query_comment,
             sources=sources,
             tests=tests,
+            metrics=metrics,
+            exposures=exposures,
             vars=vars_value,
             config_version=cfg.config_version,
             unrendered=unrendered,
@@ -543,6 +549,8 @@ class Project:
     snapshots: Dict[str, Any]
     sources: Dict[str, Any]
     tests: Dict[str, Any]
+    metrics: Dict[str, Any]
+    exposures: Dict[str, Any]
     vars: VarProvider
     dbt_version: List[VersionSpecifier]
     packages: Dict[str, Any]
@@ -615,6 +623,8 @@ class Project:
                 "snapshots": self.snapshots,
                 "sources": self.sources,
                 "tests": self.tests,
+                "metrics": self.metrics,
+                "exposures": self.exposures,
                 "vars": self.vars.to_dict(),
                 "require-dbt-version": [v.to_version_string() for v in self.dbt_version],
                 "config-version": self.config_version,
@@ -632,7 +642,7 @@ class Project:
         try:
             ProjectContract.validate(self.to_project_config())
         except ValidationError as e:
-            raise DbtProjectError(validator_error_message(e)) from e
+            raise ProjectContractBrokenError(e) from e
 
     @classmethod
     def partial_load(cls, project_root: str, *, verify_version: bool = False) -> PartialProject:
@@ -657,8 +667,8 @@ class Project:
 
     def get_selector(self, name: str) -> Union[SelectionSpec, bool]:
         if name not in self.selectors:
-            raise RuntimeException(
-                f"Could not find selector named {name}, expected one of " f"{list(self.selectors)}"
+            raise DbtRuntimeError(
+                f"Could not find selector named {name}, expected one of {list(self.selectors)}"
             )
         return self.selectors[name]["definition"]
 

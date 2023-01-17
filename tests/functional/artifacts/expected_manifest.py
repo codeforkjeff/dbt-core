@@ -33,6 +33,7 @@ def get_rendered_model_config(**updates):
         "grants": {},
         "packages": [],
         "incremental_strategy": None,
+        "docs": {"node_color": None, "show": True},
     }
     result.update(updates)
     return result
@@ -63,6 +64,7 @@ def get_rendered_seed_config(**updates):
         "grants": {},
         "packages": [],
         "incremental_strategy": None,
+        "docs": {"node_color": None, "show": True},
     }
     result.update(updates)
     return result
@@ -92,11 +94,14 @@ def get_rendered_snapshot_config(**updates):
         "strategy": "check",
         "check_cols": "all",
         "unique_key": "id",
+        "target_database": None,
         "target_schema": None,
+        "updated_at": None,
         "meta": {},
         "grants": {},
         "packages": [],
         "incremental_strategy": None,
+        "docs": {"node_color": None, "show": True},
     }
     result.update(updates)
     return result
@@ -197,12 +202,18 @@ def expected_seeded_manifest(project, model_database=None, quote_model=False):
 
     model_database = project.database
 
-    model_config = get_rendered_model_config()
-    second_config = get_rendered_model_config(schema="test")
+    model_config = get_rendered_model_config(docs={"node_color": None, "show": False})
+    second_config = get_rendered_model_config(
+        schema="test", docs={"node_color": None, "show": False}
+    )
 
-    unrendered_model_config = get_unrendered_model_config(materialized="view")
+    unrendered_model_config = get_unrendered_model_config(
+        materialized="view", docs={"show": False}
+    )
 
-    unrendered_second_config = get_unrendered_model_config(schema="test", materialized="view")
+    unrendered_second_config = get_unrendered_model_config(
+        schema="test", materialized="view", docs={"show": False}
+    )
 
     seed_config = get_rendered_seed_config()
     unrendered_seed_config = get_unrendered_seed_config()
@@ -232,7 +243,6 @@ def expected_seeded_manifest(project, model_database=None, quote_model=False):
                 "build_path": None,
                 "created_at": ANY,
                 "name": "model",
-                "root_path": project.project_root,
                 "relation_name": relation_name_node_format.format(
                     model_database, my_schema_name, "model"
                 ),
@@ -299,7 +309,7 @@ def expected_seeded_manifest(project, model_database=None, quote_model=False):
                     },
                 },
                 "patch_path": "test://" + model_schema_yml_path,
-                "docs": {"show": False},
+                "docs": {"node_color": None, "show": False},
                 "compiled": True,
                 "compiled_code": ANY,
                 "extra_ctes_injected": True,
@@ -312,7 +322,6 @@ def expected_seeded_manifest(project, model_database=None, quote_model=False):
                 "build_path": None,
                 "created_at": ANY,
                 "name": "second_model",
-                "root_path": project.project_root,
                 "relation_name": relation_name_node_format.format(
                     project.database, alternate_schema, "second_model"
                 ),
@@ -381,7 +390,7 @@ def expected_seeded_manifest(project, model_database=None, quote_model=False):
                     },
                 },
                 "patch_path": "test://" + model_schema_yml_path,
-                "docs": {"show": False},
+                "docs": {"node_color": None, "show": False},
                 "compiled": True,
                 "compiled_code": ANY,
                 "extra_ctes_injected": True,
@@ -390,30 +399,19 @@ def expected_seeded_manifest(project, model_database=None, quote_model=False):
                 "unrendered_config": unrendered_second_config,
             },
             "seed.test.seed": {
-                "compiled_path": None,
                 "build_path": None,
                 "created_at": ANY,
-                "compiled": True,
-                "compiled_code": "",
                 "config": seed_config,
                 "patch_path": "test://" + seed_schema_yml_path,
                 "path": "seed.csv",
                 "name": "seed",
                 "root_path": project.project_root,
-                "relation_name": relation_name_node_format.format(
-                    project.database, my_schema_name, "seed"
-                ),
                 "resource_type": "seed",
                 "raw_code": "",
-                "language": "sql",
                 "package_name": "test",
                 "original_file_path": seed_path,
-                "refs": [],
-                "sources": [],
-                "depends_on": {"nodes": [], "macros": []},
                 "unique_id": "seed.test.seed",
                 "fqn": ["test", "seed"],
-                "metrics": [],
                 "tags": [],
                 "meta": {},
                 "schema": my_schema_name,
@@ -463,13 +461,12 @@ def expected_seeded_manifest(project, model_database=None, quote_model=False):
                         "tags": [],
                     },
                 },
-                "docs": {"show": True},
-                "compiled": True,
-                "compiled_code": "",
-                "extra_ctes_injected": True,
-                "extra_ctes": [],
+                "docs": {"node_color": None, "show": True},
                 "checksum": checksum_file(seed_path),
                 "unrendered_config": unrendered_seed_config,
+                "relation_name": relation_name_node_format.format(
+                    project.database, my_schema_name, "seed"
+                ),
             },
             "test.test.not_null_model_id.d01cc630e6": {
                 "alias": "not_null_model_id",
@@ -501,13 +498,12 @@ def expected_seeded_manifest(project, model_database=None, quote_model=False):
                 "refs": [["model"]],
                 "relation_name": None,
                 "resource_type": "test",
-                "root_path": project.project_root,
                 "schema": test_audit_schema,
                 "database": project.database,
                 "tags": [],
                 "meta": {},
                 "unique_id": "test.test.not_null_model_id.d01cc630e6",
-                "docs": {"show": True},
+                "docs": {"node_color": None, "show": True},
                 "compiled": True,
                 "compiled_code": AnyStringWith("where id is null"),
                 "extra_ctes_injected": True,
@@ -540,7 +536,7 @@ def expected_seeded_manifest(project, model_database=None, quote_model=False):
                     "nodes": ["seed.test.seed"],
                 },
                 "description": "",
-                "docs": {"show": True},
+                "docs": {"node_color": None, "show": True},
                 "extra_ctes": [],
                 "extra_ctes_injected": True,
                 "fqn": ["test", "snapshot_seed", "snapshot_seed"],
@@ -562,7 +558,6 @@ def expected_seeded_manifest(project, model_database=None, quote_model=False):
                     project.database, alternate_schema, "snapshot_seed"
                 ),
                 "resource_type": "snapshot",
-                "root_path": project.project_root,
                 "schema": alternate_schema,
                 "sources": [],
                 "tags": [],
@@ -599,13 +594,12 @@ def expected_seeded_manifest(project, model_database=None, quote_model=False):
                 "refs": [["model"]],
                 "relation_name": None,
                 "resource_type": "test",
-                "root_path": project.project_root,
                 "schema": test_audit_schema,
                 "database": project.database,
                 "tags": [],
                 "meta": {},
                 "unique_id": "test.test.test_nothing_model_.5d38568946",
-                "docs": {"show": True},
+                "docs": {"node_color": None, "show": True},
                 "compiled": True,
                 "compiled_code": AnyStringWith("select 0"),
                 "extra_ctes_injected": True,
@@ -650,13 +644,12 @@ def expected_seeded_manifest(project, model_database=None, quote_model=False):
                 "refs": [["model"]],
                 "relation_name": None,
                 "resource_type": "test",
-                "root_path": project.project_root,
                 "schema": test_audit_schema,
                 "database": project.database,
                 "tags": [],
                 "meta": {},
                 "unique_id": "test.test.unique_model_id.67b76558ff",
-                "docs": {"show": True},
+                "docs": {"node_color": None, "show": True},
                 "compiled": True,
                 "compiled_code": AnyStringWith("count(*)"),
                 "extra_ctes_injected": True,
@@ -716,7 +709,6 @@ def expected_seeded_manifest(project, model_database=None, quote_model=False):
                     project.database, my_schema_name, "seed"
                 ),
                 "resource_type": "source",
-                "root_path": project.project_root,
                 "schema": my_schema_name,
                 "source_description": "My source",
                 "source_name": "my_source",
@@ -735,9 +727,14 @@ def expected_seeded_manifest(project, model_database=None, quote_model=False):
                     "nodes": ["model.test.model", "model.test.second_model"],
                 },
                 "description": "A description of the complex exposure\n",
+                "label": None,
+                "config": {
+                    "enabled": True,
+                },
                 "fqn": ["test", "notebook_exposure"],
                 "maturity": "medium",
                 "meta": {"tool": "my_tool", "languages": ["python"]},
+                "metrics": [],
                 "tags": ["my_department"],
                 "name": "notebook_exposure",
                 "original_file_path": os.path.join("models", "schema.yml"),
@@ -746,11 +743,11 @@ def expected_seeded_manifest(project, model_database=None, quote_model=False):
                 "path": "schema.yml",
                 "refs": [["model"], ["second_model"]],
                 "resource_type": "exposure",
-                "root_path": project.project_root,
                 "sources": [],
                 "type": "notebook",
                 "unique_id": "exposure.test.notebook_exposure",
                 "url": "http://example.com/notebook/1",
+                "unrendered_config": {},
             },
             "exposure.test.simple_exposure": {
                 "created_at": ANY,
@@ -759,7 +756,12 @@ def expected_seeded_manifest(project, model_database=None, quote_model=False):
                     "nodes": ["source.test.my_source.my_table", "model.test.model"],
                 },
                 "description": "",
+                "label": None,
+                "config": {
+                    "enabled": True,
+                },
                 "fqn": ["test", "simple_exposure"],
+                "metrics": [],
                 "name": "simple_exposure",
                 "original_file_path": os.path.join("models", "schema.yml"),
                 "owner": {
@@ -770,7 +772,6 @@ def expected_seeded_manifest(project, model_database=None, quote_model=False):
                 "path": "schema.yml",
                 "refs": [["model"]],
                 "resource_type": "exposure",
-                "root_path": project.project_root,
                 "sources": [["my_source", "my_table"]],
                 "type": "dashboard",
                 "unique_id": "exposure.test.simple_exposure",
@@ -778,6 +779,7 @@ def expected_seeded_manifest(project, model_database=None, quote_model=False):
                 "maturity": None,
                 "meta": {},
                 "tags": [],
+                "unrendered_config": {},
             },
         },
         "metrics": {},
@@ -820,9 +822,9 @@ def expected_seeded_manifest(project, model_database=None, quote_model=False):
             "test.test.unique_model_id.67b76558ff": [],
         },
         "docs": {
-            "dbt.__overview__": ANY,
-            "test.macro_info": ANY,
-            "test.macro_arg_info": ANY,
+            "doc.dbt.__overview__": ANY,
+            "doc.test.macro_info": ANY,
+            "doc.test.macro_arg_info": ANY,
         },
         "disabled": {},
     }
@@ -860,7 +862,7 @@ def expected_references_manifest(project):
                 "depends_on": {"macros": [], "nodes": ["source.test.my_source.my_table"]},
                 "deferred": False,
                 "description": "",
-                "docs": {"show": True},
+                "docs": {"node_color": None, "show": True},
                 "fqn": ["test", "ephemeral_copy"],
                 "metrics": [],
                 "name": "ephemeral_copy",
@@ -873,7 +875,6 @@ def expected_references_manifest(project):
                 "refs": [],
                 "relation_name": None,
                 "resource_type": "model",
-                "root_path": project.project_root,
                 "schema": my_schema_name,
                 "database": project.database,
                 "tags": [],
@@ -914,7 +915,7 @@ def expected_references_manifest(project):
                 "depends_on": {"macros": [], "nodes": ["model.test.ephemeral_copy"]},
                 "deferred": False,
                 "description": "A summmary table of the ephemeral copy of the seed data",
-                "docs": {"show": True},
+                "docs": {"node_color": None, "show": True},
                 "fqn": ["test", "ephemeral_summary"],
                 "metrics": [],
                 "name": "ephemeral_summary",
@@ -929,7 +930,6 @@ def expected_references_manifest(project):
                     model_database, my_schema_name
                 ),
                 "resource_type": "model",
-                "root_path": project.project_root,
                 "schema": my_schema_name,
                 "database": project.database,
                 "tags": [],
@@ -970,7 +970,7 @@ def expected_references_manifest(project):
                 "depends_on": {"macros": [], "nodes": ["model.test.ephemeral_summary"]},
                 "deferred": False,
                 "description": "A view of the summary of the ephemeral copy of the seed data",
-                "docs": {"show": True},
+                "docs": {"node_color": None, "show": True},
                 "fqn": ["test", "view_summary"],
                 "metrics": [],
                 "name": "view_summary",
@@ -983,7 +983,6 @@ def expected_references_manifest(project):
                 "refs": [["ephemeral_summary"]],
                 "relation_name": '"{0}"."{1}".view_summary'.format(model_database, my_schema_name),
                 "resource_type": "model",
-                "root_path": project.project_root,
                 "schema": my_schema_name,
                 "sources": [],
                 "tags": [],
@@ -998,7 +997,6 @@ def expected_references_manifest(project):
             },
             "seed.test.seed": {
                 "alias": "seed",
-                "compiled_path": None,
                 "build_path": None,
                 "created_at": ANY,
                 "columns": {
@@ -1044,22 +1042,16 @@ def expected_references_manifest(project):
                     },
                 },
                 "config": get_rendered_seed_config(),
-                "sources": [],
-                "depends_on": {"macros": [], "nodes": []},
                 "deferred": False,
                 "description": "The test seed",
-                "docs": {"show": True},
+                "docs": {"node_color": None, "show": True},
                 "fqn": ["test", "seed"],
-                "metrics": [],
                 "name": "seed",
                 "original_file_path": seed_path,
                 "package_name": "test",
                 "patch_path": "test://" + os.path.join("seeds", "schema.yml"),
                 "path": "seed.csv",
                 "raw_code": "",
-                "language": "sql",
-                "refs": [],
-                "relation_name": '"{0}"."{1}".seed'.format(model_database, my_schema_name),
                 "resource_type": "seed",
                 "root_path": project.project_root,
                 "schema": my_schema_name,
@@ -1067,12 +1059,9 @@ def expected_references_manifest(project):
                 "tags": [],
                 "meta": {},
                 "unique_id": "seed.test.seed",
-                "compiled": True,
-                "compiled_code": "",
-                "extra_ctes_injected": True,
-                "extra_ctes": [],
                 "checksum": checksum_file(seed_path),
                 "unrendered_config": get_unrendered_seed_config(),
+                "relation_name": '"{0}"."{1}".seed'.format(project.database, my_schema_name),
             },
             "snapshot.test.snapshot_seed": {
                 "alias": "snapshot_seed",
@@ -1088,7 +1077,7 @@ def expected_references_manifest(project):
                 "deferred": False,
                 "depends_on": {"macros": [], "nodes": ["seed.test.seed"]},
                 "description": "",
-                "docs": {"show": True},
+                "docs": {"node_color": None, "show": True},
                 "extra_ctes": [],
                 "extra_ctes_injected": True,
                 "fqn": ["test", "snapshot_seed", "snapshot_seed"],
@@ -1106,7 +1095,6 @@ def expected_references_manifest(project):
                     model_database, alternate_schema
                 ),
                 "resource_type": "snapshot",
-                "root_path": project.project_root,
                 "schema": alternate_schema,
                 "sources": [],
                 "tags": [],
@@ -1157,7 +1145,6 @@ def expected_references_manifest(project):
                 "patch_path": None,
                 "relation_name": '{0}."{1}"."seed"'.format(project.database, my_schema_name),
                 "resource_type": "source",
-                "root_path": project.project_root,
                 "schema": my_schema_name,
                 "source_description": "My source",
                 "source_name": "my_source",
@@ -1173,9 +1160,14 @@ def expected_references_manifest(project):
                 "created_at": ANY,
                 "depends_on": {"macros": [], "nodes": ["model.test.view_summary"]},
                 "description": "A description of the complex exposure",
+                "label": None,
+                "config": {
+                    "enabled": True,
+                },
                 "fqn": ["test", "notebook_exposure"],
                 "maturity": "medium",
                 "meta": {"tool": "my_tool", "languages": ["python"]},
+                "metrics": [],
                 "tags": ["my_department"],
                 "name": "notebook_exposure",
                 "original_file_path": os.path.join("models", "schema.yml"),
@@ -1184,108 +1176,106 @@ def expected_references_manifest(project):
                 "path": "schema.yml",
                 "refs": [["view_summary"]],
                 "resource_type": "exposure",
-                "root_path": project.project_root,
                 "sources": [],
                 "type": "notebook",
                 "unique_id": "exposure.test.notebook_exposure",
                 "url": "http://example.com/notebook/1",
+                "unrendered_config": {},
             },
         },
         "metrics": {},
         "selectors": {},
         "docs": {
-            "dbt.__overview__": ANY,
-            "test.column_info": {
+            "doc.dbt.__overview__": ANY,
+            "doc.test.column_info": {
                 "block_contents": "An ID field",
+                "resource_type": "doc",
                 "name": "column_info",
                 "original_file_path": docs_path,
                 "package_name": "test",
                 "path": "docs.md",
-                "root_path": project.project_root,
-                "unique_id": "test.column_info",
+                "unique_id": "doc.test.column_info",
             },
-            "test.ephemeral_summary": {
+            "doc.test.ephemeral_summary": {
                 "block_contents": ("A summmary table of the ephemeral copy of the seed data"),
+                "resource_type": "doc",
                 "name": "ephemeral_summary",
                 "original_file_path": docs_path,
                 "package_name": "test",
                 "path": "docs.md",
-                "root_path": project.project_root,
-                "unique_id": "test.ephemeral_summary",
+                "unique_id": "doc.test.ephemeral_summary",
             },
-            "test.source_info": {
+            "doc.test.source_info": {
                 "block_contents": "My source",
+                "resource_type": "doc",
                 "name": "source_info",
                 "original_file_path": docs_path,
                 "package_name": "test",
                 "path": "docs.md",
-                "root_path": project.project_root,
-                "unique_id": "test.source_info",
+                "unique_id": "doc.test.source_info",
             },
-            "test.summary_count": {
+            "doc.test.summary_count": {
                 "block_contents": "The number of instances of the first name",
+                "resource_type": "doc",
                 "name": "summary_count",
                 "original_file_path": docs_path,
                 "package_name": "test",
                 "path": "docs.md",
-                "root_path": project.project_root,
-                "unique_id": "test.summary_count",
+                "unique_id": "doc.test.summary_count",
             },
-            "test.summary_first_name": {
+            "doc.test.summary_first_name": {
                 "block_contents": "The first name being summarized",
+                "resource_type": "doc",
                 "name": "summary_first_name",
                 "original_file_path": docs_path,
                 "package_name": "test",
                 "path": "docs.md",
-                "root_path": project.project_root,
-                "unique_id": "test.summary_first_name",
+                "unique_id": "doc.test.summary_first_name",
             },
-            "test.table_info": {
+            "doc.test.table_info": {
                 "block_contents": "My table",
+                "resource_type": "doc",
                 "name": "table_info",
                 "original_file_path": docs_path,
                 "package_name": "test",
                 "path": "docs.md",
-                "root_path": project.project_root,
-                "unique_id": "test.table_info",
+                "unique_id": "doc.test.table_info",
             },
-            "test.view_summary": {
-                "block_contents": (
-                    "A view of the summary of the ephemeral copy of the " "seed data"
-                ),
+            "doc.test.view_summary": {
+                "block_contents": ("A view of the summary of the ephemeral copy of the seed data"),
+                "resource_type": "doc",
                 "name": "view_summary",
                 "original_file_path": docs_path,
                 "package_name": "test",
                 "path": "docs.md",
-                "root_path": project.project_root,
-                "unique_id": "test.view_summary",
+                "unique_id": "doc.test.view_summary",
             },
-            "test.macro_info": {
+            "doc.test.macro_info": {
                 "block_contents": "My custom test that I wrote that does nothing",
+                "resource_type": "doc",
                 "name": "macro_info",
                 "original_file_path": os.path.join("macros", "macro.md"),
                 "package_name": "test",
                 "path": "macro.md",
-                "root_path": project.project_root,
-                "unique_id": "test.macro_info",
+                "unique_id": "doc.test.macro_info",
             },
-            "test.notebook_info": {
+            "doc.test.notebook_info": {
                 "block_contents": "A description of the complex exposure",
+                "resource_type": "doc",
                 "name": "notebook_info",
                 "original_file_path": docs_path,
                 "package_name": "test",
                 "path": "docs.md",
-                "root_path": project.project_root,
-                "unique_id": "test.notebook_info",
+                "unique_id": "doc.test.notebook_info",
             },
-            "test.macro_arg_info": {
+            "doc.test.macro_arg_info": {
                 "block_contents": "The model for my custom test",
+                "resource_type": "doc",
                 "name": "macro_arg_info",
                 "original_file_path": os.path.join("macros", "macro.md"),
                 "package_name": "test",
                 "path": "macro.md",
-                "root_path": project.project_root,
-                "unique_id": "test.macro_arg_info",
+                "unique_id": "doc.test.macro_arg_info",
             },
         },
         "child_map": {
@@ -1313,7 +1303,7 @@ def expected_references_manifest(project):
                 "depends_on": {"macros": []},
                 "created_at": ANY,
                 "description": "My custom test that I wrote that does nothing",
-                "docs": {"show": True},
+                "docs": {"node_color": None, "show": True},
                 "macro_sql": AnyStringWith("test nothing"),
                 "original_file_path": os.path.join("macros", "dummy_test.sql"),
                 "path": os.path.join("macros", "dummy_test.sql"),
@@ -1324,8 +1314,7 @@ def expected_references_manifest(project):
                 "patch_path": "test://" + os.path.join("macros", "schema.yml"),
                 "resource_type": "macro",
                 "unique_id": "macro.test.test_nothing",
-                "tags": [],
-                "root_path": project.project_root,
+                "supported_languages": None,
                 "arguments": [
                     {
                         "name": "model",

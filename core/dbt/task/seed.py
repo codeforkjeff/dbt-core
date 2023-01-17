@@ -6,7 +6,7 @@ from .printer import (
 )
 
 from dbt.contracts.results import RunStatus
-from dbt.exceptions import InternalException
+from dbt.exceptions import DbtInternalError
 from dbt.graph import ResourceTypeSelector
 from dbt.logger import TextOnly
 from dbt.events.functions import fire_event
@@ -14,10 +14,10 @@ from dbt.events.types import (
     SeedHeader,
     SeedHeaderSeparator,
     EmptyLine,
-    PrintSeedErrorResultLine,
-    PrintSeedResultLine,
-    PrintStartLine,
+    LogSeedResult,
+    LogStartLine,
 )
+from dbt.events.base_types import EventLevel
 from dbt.node_types import NodeType
 from dbt.contracts.results import NodeStatus
 
@@ -28,7 +28,7 @@ class SeedRunner(ModelRunner):
 
     def before_execute(self):
         fire_event(
-            PrintStartLine(
+            LogStartLine(
                 description=self.describe_node(),
                 index=self.node_index,
                 total=self.num_nodes,
@@ -47,30 +47,20 @@ class SeedRunner(ModelRunner):
 
     def print_result_line(self, result):
         model = result.node
-        if result.status == NodeStatus.Error:
-            fire_event(
-                PrintSeedErrorResultLine(
-                    status=result.status,
-                    index=self.node_index,
-                    total=self.num_nodes,
-                    execution_time=result.execution_time,
-                    schema=self.node.schema,
-                    relation=model.alias,
-                    node_info=model.node_info,
-                )
-            )
-        else:
-            fire_event(
-                PrintSeedResultLine(
-                    status=result.message,
-                    index=self.node_index,
-                    total=self.num_nodes,
-                    execution_time=result.execution_time,
-                    schema=self.node.schema,
-                    relation=model.alias,
-                    node_info=model.node_info,
-                )
-            )
+        level = EventLevel.ERROR if result.status == NodeStatus.Error else EventLevel.INFO
+        fire_event(
+            LogSeedResult(
+                status=result.status,
+                result_message=result.message,
+                index=self.node_index,
+                total=self.num_nodes,
+                execution_time=result.execution_time,
+                schema=self.node.schema,
+                relation=model.alias,
+                node_info=model.node_info,
+            ),
+            level=level,
+        )
 
 
 class SeedTask(RunTask):
@@ -83,7 +73,7 @@ class SeedTask(RunTask):
 
     def get_node_selector(self):
         if self.manifest is None or self.graph is None:
-            raise InternalException("manifest and graph must be set to get perform node selection")
+            raise DbtInternalError("manifest and graph must be set to get perform node selection")
         return ResourceTypeSelector(
             graph=self.graph,
             manifest=self.manifest,

@@ -7,25 +7,20 @@ from dbt.dataclass_schema import StrEnum
 
 from .graph import UniqueId
 
-from dbt.contracts.graph.compiled import (
-    CompiledSingularTestNode,
-    CompiledGenericTestNode,
-    CompileResultNode,
-    ManifestNode,
-)
 from dbt.contracts.graph.manifest import Manifest, WritableManifest
-from dbt.contracts.graph.parsed import (
-    HasTestMetadata,
-    ParsedSingularTestNode,
-    ParsedExposure,
-    ParsedMetric,
-    ParsedGenericTestNode,
-    ParsedSourceDefinition,
+from dbt.contracts.graph.nodes import (
+    SingularTestNode,
+    Exposure,
+    Metric,
+    GenericTestNode,
+    SourceDefinition,
+    ResultNode,
+    ManifestNode,
 )
 from dbt.contracts.state import PreviousState
 from dbt.exceptions import (
-    InternalException,
-    RuntimeException,
+    DbtInternalError,
+    DbtRuntimeError,
 )
 from dbt.node_types import NodeType
 
@@ -76,7 +71,7 @@ def is_selected_node(fqn: List[str], node_selector: str):
     return True
 
 
-SelectorTarget = Union[ParsedSourceDefinition, ManifestNode, ParsedExposure, ParsedMetric]
+SelectorTarget = Union[SourceDefinition, ManifestNode, Exposure, Metric]
 
 
 class SelectorMethod(metaclass=abc.ABCMeta):
@@ -99,7 +94,7 @@ class SelectorMethod(metaclass=abc.ABCMeta):
 
     def source_nodes(
         self, included_nodes: Set[UniqueId]
-    ) -> Iterator[Tuple[UniqueId, ParsedSourceDefinition]]:
+    ) -> Iterator[Tuple[UniqueId, SourceDefinition]]:
 
         for key, source in self.manifest.sources.items():
             unique_id = UniqueId(key)
@@ -107,9 +102,7 @@ class SelectorMethod(metaclass=abc.ABCMeta):
                 continue
             yield unique_id, source
 
-    def exposure_nodes(
-        self, included_nodes: Set[UniqueId]
-    ) -> Iterator[Tuple[UniqueId, ParsedExposure]]:
+    def exposure_nodes(self, included_nodes: Set[UniqueId]) -> Iterator[Tuple[UniqueId, Exposure]]:
 
         for key, exposure in self.manifest.exposures.items():
             unique_id = UniqueId(key)
@@ -117,9 +110,7 @@ class SelectorMethod(metaclass=abc.ABCMeta):
                 continue
             yield unique_id, exposure
 
-    def metric_nodes(
-        self, included_nodes: Set[UniqueId]
-    ) -> Iterator[Tuple[UniqueId, ParsedMetric]]:
+    def metric_nodes(self, included_nodes: Set[UniqueId]) -> Iterator[Tuple[UniqueId, Metric]]:
 
         for key, metric in self.manifest.metrics.items():
             unique_id = UniqueId(key)
@@ -139,13 +130,13 @@ class SelectorMethod(metaclass=abc.ABCMeta):
 
     def configurable_nodes(
         self, included_nodes: Set[UniqueId]
-    ) -> Iterator[Tuple[UniqueId, CompileResultNode]]:
+    ) -> Iterator[Tuple[UniqueId, ResultNode]]:
         yield from chain(self.parsed_nodes(included_nodes), self.source_nodes(included_nodes))
 
     def non_source_nodes(
         self,
         included_nodes: Set[UniqueId],
-    ) -> Iterator[Tuple[UniqueId, Union[ParsedExposure, ManifestNode, ParsedMetric]]]:
+    ) -> Iterator[Tuple[UniqueId, Union[Exposure, ManifestNode, Metric]]]:
         yield from chain(
             self.parsed_nodes(included_nodes),
             self.exposure_nodes(included_nodes),
@@ -216,7 +207,7 @@ class SourceSelectorMethod(SelectorMethod):
                 "`${{source_name}}.${{target_name}}`, or "
                 "`${{package_name}}.${{source_name}}.${{target_name}}"
             ).format(selector)
-            raise RuntimeException(msg)
+            raise DbtRuntimeError(msg)
 
         for node, real_node in self.source_nodes(included_nodes):
             if target_package not in (real_node.package_name, SELECTOR_GLOB):
@@ -243,7 +234,7 @@ class ExposureSelectorMethod(SelectorMethod):
                 "the form ${{exposure_name}} or "
                 "${{exposure_package.exposure_name}}"
             ).format(selector)
-            raise RuntimeException(msg)
+            raise DbtRuntimeError(msg)
 
         for node, real_node in self.exposure_nodes(included_nodes):
             if target_package not in (real_node.package_name, SELECTOR_GLOB):
@@ -268,7 +259,7 @@ class MetricSelectorMethod(SelectorMethod):
                 "the form ${{metric_name}} or "
                 "${{metric_package.metric_name}}"
             ).format(selector)
-            raise RuntimeException(msg)
+            raise DbtRuntimeError(msg)
 
         for node, real_node in self.metric_nodes(included_nodes):
             if target_package not in (real_node.package_name, SELECTOR_GLOB):
@@ -286,8 +277,6 @@ class PathSelectorMethod(SelectorMethod):
         root = Path.cwd()
         paths = set(p.relative_to(root) for p in root.glob(selector))
         for node, real_node in self.all_nodes(included_nodes):
-            if Path(real_node.root_path) != root:
-                continue
             ofp = Path(real_node.original_file_path)
             if ofp in paths:
                 yield node
@@ -356,8 +345,21 @@ class ConfigSelectorMethod(SelectorMethod):
             except AttributeError:
                 continue
             else:
-                if selector == value:
-                    yield node
+                if isinstance(value, list):
+                    if (
+                        (selector in value)
+                        or (CaseInsensitive(selector) == "true" and True in value)
+                        or (CaseInsensitive(selector) == "false" and False in value)
+                    ):
+                        yield node
+                else:
+                    if (
+                        (selector == value)
+                        or (CaseInsensitive(selector) == "true" and value is True)
+                        or (CaseInsensitive(selector) == "false")
+                        and value is False
+                    ):
+                        yield node
 
 
 class ResourceTypeSelectorMethod(SelectorMethod):
@@ -365,7 +367,7 @@ class ResourceTypeSelectorMethod(SelectorMethod):
         try:
             resource_type = NodeType(selector)
         except ValueError as exc:
-            raise RuntimeException(f'Invalid resource_type selector "{selector}"') from exc
+            raise DbtRuntimeError(f'Invalid resource_type selector "{selector}"') from exc
         for node, real_node in self.parsed_nodes(included_nodes):
             if real_node.resource_type == resource_type:
                 yield node
@@ -374,26 +376,26 @@ class ResourceTypeSelectorMethod(SelectorMethod):
 class TestNameSelectorMethod(SelectorMethod):
     def search(self, included_nodes: Set[UniqueId], selector: str) -> Iterator[UniqueId]:
         for node, real_node in self.parsed_nodes(included_nodes):
-            if isinstance(real_node, HasTestMetadata):
-                if real_node.test_metadata.name == selector:
+            if real_node.resource_type == NodeType.Test and hasattr(real_node, "test_metadata"):
+                if real_node.test_metadata.name == selector:  # type: ignore[union-attr]
                     yield node
 
 
 class TestTypeSelectorMethod(SelectorMethod):
     def search(self, included_nodes: Set[UniqueId], selector: str) -> Iterator[UniqueId]:
-        search_types: Tuple[Type, ...]
+        search_type: Type
         # continue supporting 'schema' + 'data' for backwards compatibility
         if selector in ("generic", "schema"):
-            search_types = (ParsedGenericTestNode, CompiledGenericTestNode)
+            search_type = GenericTestNode
         elif selector in ("singular", "data"):
-            search_types = (ParsedSingularTestNode, CompiledSingularTestNode)
+            search_type = SingularTestNode
         else:
-            raise RuntimeException(
+            raise DbtRuntimeError(
                 f'Invalid test type selector {selector}: expected "generic" or ' '"singular"'
             )
 
         for node, real_node in self.parsed_nodes(included_nodes):
-            if isinstance(real_node, search_types):
+            if isinstance(real_node, search_type):
                 yield node
 
 
@@ -405,7 +407,7 @@ class StateSelectorMethod(SelectorMethod):
     def _macros_modified(self) -> List[str]:
         # we checked in the caller!
         if self.previous_state is None or self.previous_state.manifest is None:
-            raise InternalException("No comparison manifest in _macros_modified")
+            raise DbtInternalError("No comparison manifest in _macros_modified")
         old_macros = self.previous_state.manifest.macros
         new_macros = self.manifest.macros
 
@@ -425,6 +427,9 @@ class StateSelectorMethod(SelectorMethod):
         return modified
 
     def recursively_check_macros_modified(self, node, visited_macros):
+        if not hasattr(node, "depends_on"):
+            return False
+
         for macro_uid in node.depends_on.macros:
             if macro_uid in visited_macros:
                 continue
@@ -491,7 +496,7 @@ class StateSelectorMethod(SelectorMethod):
 
     def search(self, included_nodes: Set[UniqueId], selector: str) -> Iterator[UniqueId]:
         if self.previous_state is None or self.previous_state.manifest is None:
-            raise RuntimeException("Got a state selector method, but no comparison manifest")
+            raise DbtRuntimeError("Got a state selector method, but no comparison manifest")
 
         state_checks = {
             # it's new if there is no old version
@@ -509,7 +514,7 @@ class StateSelectorMethod(SelectorMethod):
         if selector in state_checks:
             checker = state_checks[selector]
         else:
-            raise RuntimeException(
+            raise DbtRuntimeError(
                 f'Got an invalid selector "{selector}", expected one of ' f'"{list(state_checks)}"'
             )
 
@@ -533,7 +538,7 @@ class StateSelectorMethod(SelectorMethod):
 class ResultSelectorMethod(SelectorMethod):
     def search(self, included_nodes: Set[UniqueId], selector: str) -> Iterator[UniqueId]:
         if self.previous_state is None or self.previous_state.results is None:
-            raise InternalException("No comparison run_results")
+            raise DbtInternalError("No comparison run_results")
         matches = set(
             result.unique_id for result in self.previous_state.results if result.status == selector
         )
@@ -546,13 +551,11 @@ class SourceStatusSelectorMethod(SelectorMethod):
     def search(self, included_nodes: Set[UniqueId], selector: str) -> Iterator[UniqueId]:
 
         if self.previous_state is None or self.previous_state.sources is None:
-            raise InternalException(
+            raise DbtInternalError(
                 "No previous state comparison freshness results in sources.json"
             )
         elif self.previous_state.sources_current is None:
-            raise InternalException(
-                "No current state comparison freshness results in sources.json"
-            )
+            raise DbtInternalError("No current state comparison freshness results in sources.json")
 
         current_state_sources = {
             result.unique_id: getattr(result, "max_loaded_at", 0)
@@ -628,7 +631,7 @@ class MethodManager:
     def get_method(self, method: MethodName, method_arguments: List[str]) -> SelectorMethod:
 
         if method not in self.SELECTOR_METHODS:
-            raise InternalException(
+            raise DbtInternalError(
                 f'Method name "{method}" is a valid node selection '
                 f"method name, but it is not handled"
             )

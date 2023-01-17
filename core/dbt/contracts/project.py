@@ -12,9 +12,7 @@ from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Union, Any
 from mashumaro.types import SerializableType
 
-PIN_PACKAGE_URL = (
-    "https://docs.getdbt.com/docs/package-management#section-specifying-package-versions"  # noqa
-)
+
 DEFAULT_SEND_ANONYMOUS_USAGE_STATS = True
 
 
@@ -58,6 +56,12 @@ RawVersion = Union[str, float]
 
 
 @dataclass
+class TarballPackage(Package):
+    tarball: str
+    name: str
+
+
+@dataclass
 class GitPackage(Package):
     git: str
     revision: Optional[RawVersion] = None
@@ -84,12 +88,29 @@ class RegistryPackage(Package):
             return [str(self.version)]
 
 
-PackageSpec = Union[LocalPackage, GitPackage, RegistryPackage]
+PackageSpec = Union[LocalPackage, TarballPackage, GitPackage, RegistryPackage]
 
 
 @dataclass
 class PackageConfig(dbtClassMixin, Replaceable):
     packages: List[PackageSpec]
+
+    @classmethod
+    def validate(cls, data):
+        for package in data.get("packages", data):
+            if isinstance(package, dict) and package.get("package"):
+                if not package["version"]:
+                    raise ValidationError(
+                        f"{package['package']} is missing the version. When installing from the Hub "
+                        "package index, version is a required property"
+                    )
+
+                if "/" not in package["package"]:
+                    raise ValidationError(
+                        f"{package['package']} was not found in the package index. Packages on the index "
+                        "require a namespace, e.g dbt-labs/dbt_utils"
+                    )
+        super().validate(data)
 
 
 @dataclass
@@ -192,6 +213,8 @@ class Project(HyphenatedDbtClassMixin, Replaceable):
     analyses: Dict[str, Any] = field(default_factory=dict)
     sources: Dict[str, Any] = field(default_factory=dict)
     tests: Dict[str, Any] = field(default_factory=dict)
+    metrics: Dict[str, Any] = field(default_factory=dict)
+    exposures: Dict[str, Any] = field(default_factory=dict)
     vars: Optional[Dict[str, Any]] = field(
         default=None,
         metadata=dict(
@@ -199,7 +222,7 @@ class Project(HyphenatedDbtClassMixin, Replaceable):
         ),
     )
     packages: List[PackageSpec] = field(default_factory=list)
-    query_comment: Optional[Union[QueryComment, NoValue, str]] = NoValue()
+    query_comment: Optional[Union[QueryComment, NoValue, str]] = field(default_factory=NoValue)
 
     @classmethod
     def validate(cls, data):
@@ -226,6 +249,7 @@ class UserConfig(ExtensibleDbtClassMixin, Replaceable, UserConfigContract):
     printer_width: Optional[int] = None
     write_json: Optional[bool] = None
     warn_error: Optional[bool] = None
+    warn_error_options: Optional[Dict[str, Union[str, List[str]]]] = None
     log_format: Optional[str] = None
     debug: Optional[bool] = None
     version_check: Optional[bool] = None

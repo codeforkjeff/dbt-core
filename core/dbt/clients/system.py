@@ -12,14 +12,15 @@ import tarfile
 import requests
 import stat
 from typing import Type, NoReturn, List, Optional, Dict, Any, Tuple, Callable, Union
+from pathspec import PathSpec  # type: ignore
 
 from dbt.events.functions import fire_event
 from dbt.events.types import (
     SystemErrorRetrievingModTime,
     SystemCouldNotWrite,
     SystemExecutingCmd,
-    SystemStdOutMsg,
-    SystemStdErrMsg,
+    SystemStdOut,
+    SystemStdErr,
     SystemReportReturnCode,
 )
 import dbt.exceptions
@@ -36,6 +37,7 @@ def find_matching(
     root_path: str,
     relative_paths_to_search: List[str],
     file_pattern: str,
+    ignore_spec: Optional[PathSpec] = None,
 ) -> List[Dict[str, Any]]:
     """
     Given an absolute `root_path`, a list of relative paths to that
@@ -57,19 +59,30 @@ def find_matching(
     reobj = re.compile(regex, re.IGNORECASE)
 
     for relative_path_to_search in relative_paths_to_search:
+        # potential speedup for ignore_spec
+        # if ignore_spec.matches(relative_path_to_search):
+        #     continue
         absolute_path_to_search = os.path.join(root_path, relative_path_to_search)
         walk_results = os.walk(absolute_path_to_search)
 
         for current_path, subdirectories, local_files in walk_results:
+            # potential speedup for ignore_spec
+            # relative_dir = os.path.relpath(current_path, root_path) + os.sep
+            # if ignore_spec.match(relative_dir):
+            #     continue
             for local_file in local_files:
                 absolute_path = os.path.join(current_path, local_file)
                 relative_path = os.path.relpath(absolute_path, absolute_path_to_search)
+                relative_path_to_root = os.path.join(relative_path_to_search, relative_path)
+
                 modification_time = 0.0
                 try:
                     modification_time = os.path.getmtime(absolute_path)
                 except OSError:
                     fire_event(SystemErrorRetrievingModTime(path=absolute_path))
-                if reobj.match(local_file):
+                if reobj.match(local_file) and (
+                    not ignore_spec or not ignore_spec.match_file(relative_path_to_root)
+                ):
                     matching.append(
                         {
                             "searched_path": relative_path_to_search,
@@ -131,7 +144,8 @@ def make_symlink(source: str, link_path: str) -> None:
     Create a symlink at `link_path` referring to `source`.
     """
     if not supports_symlinks():
-        dbt.exceptions.system_error("create a symbolic link")
+        # TODO: why not import these at top?
+        raise dbt.exceptions.SymbolicLinkError()
 
     os.symlink(source, link_path)
 
@@ -164,7 +178,7 @@ def write_file(path: str, contents: str = "") -> bool:
                 reason = "Path was possibly too long"
             # all our hard work and the path was still too long. Log and
             # continue.
-            fire_event(SystemCouldNotWrite(path=path, reason=reason, exc=exc))
+            fire_event(SystemCouldNotWrite(path=path, reason=reason, exc=str(exc)))
         else:
             raise
     return True
@@ -398,7 +412,7 @@ def _interpret_oserror(exc: OSError, cwd: str, cmd: List[str]) -> NoReturn:
         _handle_posix_error(exc, cwd, cmd)
 
     # this should not be reachable, raise _something_ at least!
-    raise dbt.exceptions.InternalException(
+    raise dbt.exceptions.DbtInternalError(
         "Unhandled exception in _interpret_oserror: {}".format(exc)
     )
 
@@ -427,8 +441,8 @@ def run_cmd(cwd: str, cmd: List[str], env: Optional[Dict[str, Any]] = None) -> T
     except OSError as exc:
         _interpret_oserror(exc, cwd, cmd)
 
-    fire_event(SystemStdOutMsg(bmsg=out))
-    fire_event(SystemStdErrMsg(bmsg=err))
+    fire_event(SystemStdOut(bmsg=out))
+    fire_event(SystemStdErr(bmsg=err))
 
     if proc.returncode != 0:
         fire_event(SystemReportReturnCode(returncode=proc.returncode))
